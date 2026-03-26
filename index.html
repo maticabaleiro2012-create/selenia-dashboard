@@ -1,0 +1,751 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Selenia — Command Center</title>
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --bg2: #12121a;
+    --bg3: #1a1a2e;
+    --border: #2a2a3e;
+    --text: #e0e0e8;
+    --text2: #8888a0;
+    --accent: #6c5ce7;
+    --accent2: #a29bfe;
+    --green: #00b894;
+    --red: #e17055;
+    --orange: #fdcb6e;
+    --blue: #74b9ff;
+    --pink: #fd79a8;
+    --cyan: #81ecec;
+    --radius: 12px;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* === HEADER === */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 24px;
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  .header-left { display: flex; align-items: center; gap: 12px; }
+  .logo {
+    width: 36px; height: 36px;
+    background: linear-gradient(135deg, var(--accent), var(--pink));
+    border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 900; font-size: 18px; color: white;
+  }
+  .header h1 { font-size: 20px; font-weight: 700; }
+  .header h1 span { color: var(--accent2); font-weight: 300; }
+  .header-right { display: flex; align-items: center; gap: 16px; }
+  .status-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--green);
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+  .status-text { font-size: 13px; color: var(--text2); }
+  .uptime { font-size: 12px; color: var(--text2); font-family: 'Consolas', monospace; }
+
+  /* === LAYOUT === */
+  .main { display: grid; grid-template-columns: 1fr 380px; gap: 0; min-height: calc(100vh - 65px); }
+  .content { padding: 24px; overflow-y: auto; }
+  .sidebar {
+    background: var(--bg2);
+    border-left: 1px solid var(--border);
+    display: flex; flex-direction: column;
+  }
+
+  /* === METRICS BAR === */
+  .metrics-bar {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+  .metric-card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    text-align: center;
+  }
+  .metric-card .value {
+    font-size: 28px; font-weight: 800;
+    background: linear-gradient(135deg, var(--accent2), var(--cyan));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .metric-card .label { font-size: 11px; color: var(--text2); text-transform: uppercase; letter-spacing: 1px; margin-top: 4px; }
+
+  /* === MODULE CARDS === */
+  .section-title {
+    font-size: 14px; text-transform: uppercase; letter-spacing: 2px;
+    color: var(--text2); margin-bottom: 16px; font-weight: 600;
+  }
+  .modules-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+  .mod-card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    position: relative;
+    overflow: hidden;
+  }
+  .mod-card:hover {
+    border-color: var(--accent);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(108, 92, 231, 0.15);
+  }
+  .mod-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0; height: 3px;
+  }
+  .mod-card[data-module="gastronomia"]::before { background: var(--orange); }
+  .mod-card[data-module="logistica"]::before { background: var(--blue); }
+  .mod-card[data-module="onbox-market"]::before { background: var(--green); }
+  .mod-card[data-module="retail"]::before { background: var(--pink); }
+  .mod-card[data-module="sistemas"]::before { background: var(--cyan); }
+  .mod-card[data-module="financiera"]::before { background: var(--accent2); }
+
+  .mod-card .mod-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+  .mod-card .mod-icon { font-size: 24px; }
+  .mod-card .mod-status {
+    font-size: 10px; padding: 3px 8px; border-radius: 20px;
+    text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px;
+  }
+  .mod-status.running { background: rgba(0, 184, 148, 0.15); color: var(--green); }
+  .mod-status.error { background: rgba(225, 112, 85, 0.15); color: var(--red); }
+  .mod-status.booting { background: rgba(253, 203, 110, 0.15); color: var(--orange); }
+  .mod-card .mod-name { font-size: 16px; font-weight: 700; margin-bottom: 4px; }
+  .mod-card .mod-desc { font-size: 12px; color: var(--text2); margin-bottom: 12px; }
+  .mod-card .mod-stats { display: flex; gap: 12px; }
+  .mod-card .mod-stat {
+    font-size: 11px; color: var(--text2);
+    display: flex; align-items: center; gap: 4px;
+  }
+  .mod-card .mod-stat .num { color: var(--text); font-weight: 700; font-size: 14px; }
+
+  /* === EVENT STREAM === */
+  .event-stream {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    max-height: 320px;
+    overflow-y: auto;
+  }
+  .event-stream::-webkit-scrollbar { width: 4px; }
+  .event-stream::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  .event-item {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 8px 0;
+    border-bottom: 1px solid rgba(42, 42, 62, 0.5);
+    font-size: 12px;
+    animation: fadeIn 0.3s ease;
+  }
+  @keyframes fadeIn { from { opacity: 0; transform: translateX(-10px); } to { opacity: 1; transform: none; } }
+  .event-item:last-child { border-bottom: none; }
+  .event-dot { width: 6px; height: 6px; border-radius: 50%; margin-top: 5px; flex-shrink: 0; }
+  .event-time { color: var(--text2); font-family: 'Consolas', monospace; flex-shrink: 0; }
+  .event-type { color: var(--accent2); font-weight: 600; }
+  .event-payload { color: var(--text2); word-break: break-all; }
+
+  /* === SIDEBAR: CHAT === */
+  .chat-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    font-weight: 700; font-size: 14px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 20px;
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  .chat-messages::-webkit-scrollbar { width: 4px; }
+  .chat-messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  .chat-msg {
+    max-width: 90%;
+    padding: 10px 14px;
+    border-radius: 12px;
+    font-size: 13px;
+    line-height: 1.5;
+    animation: fadeIn 0.3s ease;
+  }
+  .chat-msg.user {
+    align-self: flex-end;
+    background: var(--accent);
+    color: white;
+    border-bottom-right-radius: 4px;
+  }
+  .chat-msg.ai {
+    align-self: flex-start;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-bottom-left-radius: 4px;
+  }
+  .chat-msg.ai .sender { font-size: 10px; color: var(--accent2); font-weight: 700; margin-bottom: 4px; }
+  .chat-msg.system {
+    align-self: center;
+    background: none;
+    color: var(--text2);
+    font-size: 11px;
+    text-align: center;
+    font-style: italic;
+  }
+  .chat-input-area {
+    padding: 12px 16px;
+    border-top: 1px solid var(--border);
+    display: flex; gap: 8px;
+  }
+  .chat-input {
+    flex: 1;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    color: var(--text);
+    font-size: 13px;
+    outline: none;
+    font-family: inherit;
+    resize: none;
+  }
+  .chat-input:focus { border-color: var(--accent); }
+  .chat-input::placeholder { color: var(--text2); }
+  .chat-send {
+    background: var(--accent);
+    border: none;
+    border-radius: 8px;
+    width: 40px;
+    cursor: pointer;
+    color: white;
+    font-size: 18px;
+    transition: background 0.2s;
+  }
+  .chat-send:hover { background: var(--accent2); }
+  .chat-send:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* === MODAL === */
+  .modal-overlay {
+    position: fixed; inset: 0;
+    background: rgba(0, 0, 0, 0.7);
+    display: none; align-items: center; justify-content: center;
+    z-index: 200;
+  }
+  .modal-overlay.active { display: flex; }
+  .modal {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    width: 600px; max-height: 80vh;
+    overflow-y: auto; padding: 24px;
+  }
+  .modal h2 { font-size: 18px; margin-bottom: 16px; }
+  .modal .close { float: right; background: none; border: none; color: var(--text2); cursor: pointer; font-size: 20px; }
+  .modal .cmd-list { display: flex; flex-direction: column; gap: 8px; }
+  .modal .cmd-item {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 16px;
+    cursor: pointer;
+    transition: border-color 0.2s;
+  }
+  .modal .cmd-item:hover { border-color: var(--accent); }
+  .modal .cmd-name { font-weight: 700; font-size: 14px; color: var(--accent2); }
+  .modal .cmd-desc { font-size: 12px; color: var(--text2); margin-top: 2px; }
+
+  /* === RESPONSIVE === */
+  @media (max-width: 1100px) {
+    .main { grid-template-columns: 1fr; }
+    .sidebar { height: 400px; border-left: none; border-top: 1px solid var(--border); }
+    .modules-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (max-width: 600px) {
+    .modules-grid { grid-template-columns: 1fr; }
+    .metrics-bar { grid-template-columns: repeat(2, 1fr); }
+  }
+
+  .loading { display: inline-block; }
+  .loading::after {
+    content: ''; display: inline-block;
+    width: 12px; height: 12px;
+    border: 2px solid var(--accent2);
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<header class="header">
+  <div class="header-left">
+    <div class="logo">S</div>
+    <h1>Selenia <span>Command Center</span></h1>
+  </div>
+  <div class="header-right">
+    <div style="display:flex;align-items:center;gap:6px">
+      <div class="status-dot" id="statusDot"></div>
+      <span class="status-text" id="statusText">Conectando...</span>
+    </div>
+    <span class="uptime" id="uptimeText">--:--:--</span>
+  </div>
+</header>
+
+<!-- MAIN -->
+<div class="main">
+  <!-- LEFT: CONTENT -->
+  <div class="content">
+    <!-- Metrics -->
+    <div class="metrics-bar">
+      <div class="metric-card">
+        <div class="value" id="metricModules">-</div>
+        <div class="label">Módulos activos</div>
+      </div>
+      <div class="metric-card">
+        <div class="value" id="metricEvents">-</div>
+        <div class="label">Eventos hoy</div>
+      </div>
+      <div class="metric-card">
+        <div class="value" id="metricRequests">-</div>
+        <div class="label">Requests</div>
+      </div>
+      <div class="metric-card">
+        <div class="value" id="metricErrors">-</div>
+        <div class="label">Errores</div>
+      </div>
+    </div>
+
+    <!-- Modules -->
+    <div class="section-title">Módulos de negocio</div>
+    <div class="modules-grid" id="modulesGrid"></div>
+
+    <!-- Events -->
+    <div class="section-title">Event Stream (en vivo)</div>
+    <div class="event-stream" id="eventStream">
+      <div style="color:var(--text2);text-align:center;padding:20px">Cargando eventos...</div>
+    </div>
+  </div>
+
+  <!-- RIGHT: CHAT SIDEBAR -->
+  <div class="sidebar">
+    <div class="chat-header">
+      <div class="logo" style="width:24px;height:24px;font-size:12px;border-radius:6px">S</div>
+      Selenia IA
+    </div>
+    <div class="chat-messages" id="chatMessages">
+      <div class="chat-msg system">Selenia está lista. Preguntame lo que quieras sobre el sistema.</div>
+    </div>
+    <div class="chat-input-area">
+      <textarea class="chat-input" id="chatInput" rows="1" placeholder="Escribí tu mensaje..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat()}"></textarea>
+      <button class="chat-send" id="chatSend" onclick="sendChat()">→</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODULE DETAIL MODAL -->
+<div class="modal-overlay" id="moduleModal">
+  <div class="modal">
+    <button class="close" onclick="closeModal()">✕</button>
+    <h2 id="modalTitle"></h2>
+    <div id="modalContent"></div>
+  </div>
+</div>
+
+<script>
+const API = window.location.origin;
+let DEMO_MODE = false;
+const MODULE_META = {
+  gastronomia: { icon: '🍕', color: '#fdcb6e', desc: 'Pedidos, delivery, cocina, app clientes' },
+  logistica: { icon: '🚚', color: '#74b9ff', desc: 'Rutas, drivers, zonas, tracking, scanner' },
+  'onbox-market': { icon: '🛒', color: '#00b894', desc: 'Marketplace B2C/B2B, ML, Shopify, TN' },
+  retail: { icon: '📦', color: '#fd79a8', desc: 'Inventario FIFO, stock, precios, lotes' },
+  sistemas: { icon: '⚙️', color: '#81ecec', desc: 'Infra, workers, APIs, monitoring, deploys' },
+  financiera: { icon: '💰', color: '#a29bfe', desc: 'AFIP, impuestos, crypto, pagos, cobranzas' },
+};
+
+const COMMANDS = {
+  gastronomia: [
+    { name: 'crear-pedido', desc: 'Crear nuevo pedido gastronómico' },
+    { name: 'cambiar-estado-pedido', desc: 'Cambiar estado de un pedido' },
+    { name: 'asignar-repartidor', desc: 'Asignar repartidor a pedido' },
+    { name: 'dashboard', desc: 'Ver métricas del módulo' },
+  ],
+  logistica: [
+    { name: 'crear-envio', desc: 'Crear nuevo envío' },
+    { name: 'asignar-driver', desc: 'Asignar driver a envío' },
+    { name: 'confirmar-entrega', desc: 'Confirmar entrega completada' },
+    { name: 'escanear-etiqueta', desc: 'Escanear etiqueta de paquete' },
+    { name: 'optimizar-rutas', desc: 'Optimizar rutas de zona' },
+    { name: 'dashboard', desc: 'Ver métricas del módulo' },
+  ],
+  'onbox-market': [
+    { name: 'listar-catalogo', desc: 'Listar catálogo de productos' },
+    { name: 'checkout', desc: 'Procesar checkout de orden' },
+    { name: 'sync-mercadolibre', desc: 'Sincronizar con MercadoLibre' },
+    { name: 'sync-shopify', desc: 'Sincronizar con Shopify' },
+    { name: 'sync-tiendanube', desc: 'Sincronizar con TiendaNube' },
+    { name: 'match-b2b', desc: 'Match B2B oferta/demanda' },
+    { name: 'dashboard', desc: 'Ver métricas del módulo' },
+  ],
+  retail: [
+    { name: 'consultar-stock', desc: 'Consultar stock de producto' },
+    { name: 'ingreso-stock', desc: 'Ingresar stock' },
+    { name: 'deducir-stock', desc: 'Deducir stock (FIFO)' },
+    { name: 'actualizar-precio', desc: 'Actualizar precio de producto' },
+    { name: 'alertas-stock-bajo', desc: 'Ver alertas de stock bajo' },
+    { name: 'dashboard', desc: 'Ver métricas del módulo' },
+  ],
+  sistemas: [
+    { name: 'health-check', desc: 'Health check de servicios' },
+    { name: 'deploy-preview', desc: 'Deploy a preview' },
+    { name: 'deploy-produccion', desc: 'Deploy a producción' },
+    { name: 'listar-workers', desc: 'Listar workers activos' },
+    { name: 'logs', desc: 'Ver logs de worker' },
+    { name: 'dashboard', desc: 'Ver métricas del módulo' },
+  ],
+  financiera: [
+    { name: 'emitir-factura', desc: 'Emitir factura AFIP' },
+    { name: 'consultar-ultimo-cbte', desc: 'Consultar último comprobante' },
+    { name: 'calcular-iva', desc: 'Calcular IVA' },
+    { name: 'scan-oportunidades', desc: 'Escanear oportunidades crypto' },
+    { name: 'ejecutar-arbitraje', desc: 'Ejecutar arbitraje crypto' },
+    { name: 'pnl', desc: 'Ver P&L crypto' },
+    { name: 'crear-preferencia-mp', desc: 'Crear preferencia MercadoPago' },
+    { name: 'dashboard', desc: 'Ver métricas del módulo' },
+  ],
+};
+
+let eventCount = 0;
+let pollInterval;
+let demoUptime = 0;
+
+// === DEMO DATA ===
+const DEMO_MODULES = {
+  gastronomia: { status: 'running', manifest: { name: 'Gastronomía OnBox', commands: ['listar-pedidos','nuevo-pedido','estado-cocina','asignar-delivery','menu-del-dia','reservar-mesa','carta-qr','dashboard'] } },
+  logistica: { status: 'running', manifest: { name: 'Logística & Delivery', commands: ['asignar-envio','tracking','listar-drivers','optimizar-rutas','scan-paquete','dashboard'] } },
+  'onbox-market': { status: 'running', manifest: { name: 'Onbox Marketplace', commands: ['listar-productos','publicar-ml','sync-stock','importar-ordenes','sync-shopify','sync-tiendanube','dashboard'] } },
+  retail: { status: 'running', manifest: { name: 'Retail & Inventario', commands: ['consultar-stock','entrada-mercaderia','ajuste-inventario','alerta-stock-bajo','reporte-valorizado','dashboard'] } },
+  sistemas: { status: 'running', manifest: { name: 'Sistemas & DevOps', commands: ['health-check','deploy-preview','deploy-produccion','listar-workers','logs','dashboard'] } },
+  financiera: { status: 'running', manifest: { name: 'Financiera & Crypto', commands: ['emitir-factura','consultar-ultimo-cbte','calcular-iva','scan-oportunidades','ejecutar-arbitraje','pnl','crear-preferencia-mp','dashboard'] } },
+};
+
+const DEMO_EVENTS = [
+  { type: 'selenia.boot', payload: { version: '0.2.1' }, meta: { timestamp: Date.now() - 60000 } },
+  { type: 'module.registered', payload: { id: 'gastronomia' }, meta: { timestamp: Date.now() - 55000 } },
+  { type: 'module.registered', payload: { id: 'logistica' }, meta: { timestamp: Date.now() - 54000 } },
+  { type: 'module.registered', payload: { id: 'onbox-market' }, meta: { timestamp: Date.now() - 53000 } },
+  { type: 'module.registered', payload: { id: 'retail' }, meta: { timestamp: Date.now() - 52000 } },
+  { type: 'module.registered', payload: { id: 'sistemas' }, meta: { timestamp: Date.now() - 51000 } },
+  { type: 'module.registered', payload: { id: 'financiera' }, meta: { timestamp: Date.now() - 50000 } },
+  { type: 'gateway.ready', payload: { port: 4000, routes: 9 }, meta: { timestamp: Date.now() - 49000 } },
+  { type: 'selenia.ready', payload: { modules: 6, flows: 4, tools: 7 }, meta: { timestamp: Date.now() - 48000 } },
+  { type: 'monitor.check', payload: { healthy: 6, total: 6 }, meta: { timestamp: Date.now() - 30000 } },
+];
+
+const DEMO_AI_RESPONSES = [
+  '¡Hola! Soy **Selenia**, tu asistente de IA. Controlo 6 módulos de negocio del ecosistema OnBox.\n\nPuedo ayudarte con:\n- 🍕 Gestión de pedidos\n- 📦 Logística y envíos\n- 🛒 Marketplace multi-canal\n- 🏪 Inventario y stock\n- ⚙️ DevOps y workers\n- 💰 Facturación AFIP y crypto',
+  'El sistema tiene **6 módulos activos**, todos running. El Event Bus está procesando eventos normalmente y los 8 conectores están operativos.',
+  'Para ejecutar un comando, hacé clic en cualquier módulo y elegí la acción. Yo me encargo de orquestar todo automáticamente.',
+  'El flujo `pedido-completo` ejecuta: gastronomia → logistica → financiera. Ideal para un pedido de delivery completo con facturación.',
+];
+let demoAiIndex = 0;
+
+// === FETCH HELPERS ===
+async function api(path, opts = {}) {
+  if (DEMO_MODE) {
+    if (path === '/health') return { uptime: demoUptime, modules: DEMO_MODULES };
+    if (path === '/events/stats') return { historySize: DEMO_EVENTS.length };
+    if (path === '/events/history') return DEMO_EVENTS;
+    if (path.startsWith('/ai/chat')) {
+      const resp = DEMO_AI_RESPONSES[demoAiIndex % DEMO_AI_RESPONSES.length];
+      demoAiIndex++;
+      return { message: resp };
+    }
+    if (path.includes('/command')) return { ok: true, result: 'Comando ejecutado (demo mode)' };
+    if (path === '/connectors/health') return { status: 'demo' };
+    return {};
+  }
+  const res = await fetch(`${API}${path}`, {
+    headers: { 'Content-Type': 'application/json' },
+    ...opts,
+  });
+  if (!res.ok) throw new Error(`API ${res.status}`);
+  return res.json();
+}
+
+// === INIT ===
+async function init() {
+  try {
+    await refreshStatus();
+    await refreshEvents();
+    pollInterval = setInterval(async () => {
+      if (DEMO_MODE) demoUptime += 3;
+      await refreshStatus();
+      await refreshEvents();
+    }, 3000);
+    document.getElementById('statusDot').style.background = 'var(--green)';
+    document.getElementById('statusText').textContent = DEMO_MODE ? 'Demo Mode' : 'Conectado';
+  } catch (e) {
+    // API not available — switch to demo mode
+    DEMO_MODE = true;
+    demoUptime = 42;
+    document.getElementById('statusDot').style.background = 'var(--orange)';
+    document.getElementById('statusText').textContent = 'Demo Mode';
+    await refreshStatus();
+    await refreshEvents();
+    pollInterval = setInterval(async () => {
+      demoUptime += 3;
+      // Add random demo events
+      if (Math.random() > 0.5) {
+        const types = ['monitor.check', 'module.heartbeat', 'event.processed', 'selenia.insight'];
+        const mods = ['gastronomia', 'logistica', 'onbox-market', 'retail', 'sistemas', 'financiera'];
+        DEMO_EVENTS.push({
+          type: types[Math.floor(Math.random() * types.length)],
+          payload: { module: mods[Math.floor(Math.random() * mods.length)] },
+          meta: { timestamp: Date.now() }
+        });
+      }
+      await refreshStatus();
+      await refreshEvents();
+    }, 3000);
+  }
+}
+
+// === REFRESH STATUS ===
+async function refreshStatus() {
+  const health = await api('/health');
+  const stats = await api('/events/stats');
+
+  // Uptime
+  const secs = Math.floor(health.uptime);
+  const h = String(Math.floor(secs / 3600)).padStart(2, '0');
+  const m = String(Math.floor((secs % 3600) / 60)).padStart(2, '0');
+  const s = String(secs % 60).padStart(2, '0');
+  document.getElementById('uptimeText').textContent = `${h}:${m}:${s}`;
+
+  // Metrics
+  const mods = health.modules || {};
+  const running = Object.values(mods).filter(v => v.status === 'running').length;
+  document.getElementById('metricModules').textContent = running;
+  document.getElementById('metricEvents').textContent = stats.historySize || 0;
+  document.getElementById('metricRequests').textContent = '-';
+  document.getElementById('metricErrors').textContent =
+    Object.values(mods).filter(v => v.status === 'error').length;
+
+  // Module cards
+  renderModules(mods);
+}
+
+// === RENDER MODULES ===
+function renderModules(mods) {
+  const grid = document.getElementById('modulesGrid');
+  grid.innerHTML = '';
+
+  for (const [id, data] of Object.entries(mods)) {
+    const meta = MODULE_META[id] || { icon: '📋', color: '#888', desc: id };
+    const card = document.createElement('div');
+    card.className = 'mod-card';
+    card.dataset.module = id;
+    card.onclick = () => openModule(id, data);
+
+    const statusClass = data.status === 'running' ? 'running' : data.status === 'error' ? 'error' : 'booting';
+
+    card.innerHTML = `
+      <div class="mod-header">
+        <span class="mod-icon">${meta.icon}</span>
+        <span class="mod-status ${statusClass}">${data.status}</span>
+      </div>
+      <div class="mod-name">${data.manifest?.name || id}</div>
+      <div class="mod-desc">${meta.desc}</div>
+      <div class="mod-stats">
+        <div class="mod-stat">Cmds: <span class="num">${data.manifest?.commands?.length || 0}</span></div>
+      </div>
+    `;
+    grid.appendChild(card);
+  }
+}
+
+// === REFRESH EVENTS ===
+async function refreshEvents() {
+  const history = await api('/events/history');
+  const stream = document.getElementById('eventStream');
+
+  if (!history || history.length === 0) {
+    stream.innerHTML = '<div style="color:var(--text2);text-align:center;padding:20px">Sin eventos todavía</div>';
+    return;
+  }
+
+  const latest = history.slice(-30).reverse();
+  eventCount = history.length;
+  document.getElementById('metricEvents').textContent = eventCount;
+
+  stream.innerHTML = latest.map(ev => {
+    const t = new Date(ev.meta?.timestamp || Date.now());
+    const time = `${String(t.getHours()).padStart(2,'0')}:${String(t.getMinutes()).padStart(2,'0')}:${String(t.getSeconds()).padStart(2,'0')}`;
+    const color = ev.type.includes('error') ? 'var(--red)' :
+                  ev.type.includes('selenia') ? 'var(--accent2)' :
+                  ev.type.includes('gateway') ? 'var(--cyan)' : 'var(--green)';
+    const payload = JSON.stringify(ev.payload || {}).slice(0, 80);
+    return `
+      <div class="event-item">
+        <div class="event-dot" style="background:${color}"></div>
+        <span class="event-time">${time}</span>
+        <span class="event-type">${ev.type}</span>
+        <span class="event-payload">${payload}</span>
+      </div>
+    `;
+  }).join('');
+}
+
+// === OPEN MODULE DETAIL ===
+function openModule(moduleId, data) {
+  const meta = MODULE_META[moduleId] || {};
+  const modal = document.getElementById('moduleModal');
+  document.getElementById('modalTitle').textContent = `${meta.icon || ''} ${data.manifest?.name || moduleId}`;
+
+  const cmds = COMMANDS[moduleId] || [];
+  document.getElementById('modalContent').innerHTML = `
+    <p style="color:var(--text2);margin-bottom:16px;font-size:13px">${meta.desc || ''}</p>
+    <div style="margin-bottom:16px;font-size:13px">
+      <strong>Estado:</strong> ${data.status} &nbsp;|&nbsp;
+      <strong>Comandos:</strong> ${cmds.length}
+    </div>
+    <div class="section-title" style="margin-top:16px">Comandos disponibles</div>
+    <div class="cmd-list">
+      ${cmds.map(c => `
+        <div class="cmd-item" onclick="runCommand('${moduleId}', '${c.name}')">
+          <div class="cmd-name">${c.name}</div>
+          <div class="cmd-desc">${c.desc}</div>
+        </div>
+      `).join('')}
+    </div>
+    <div id="cmdResult" style="margin-top:16px"></div>
+  `;
+  modal.classList.add('active');
+}
+
+function closeModal() {
+  document.getElementById('moduleModal').classList.remove('active');
+}
+document.getElementById('moduleModal').addEventListener('click', (e) => {
+  if (e.target === e.currentTarget) closeModal();
+});
+
+// === RUN COMMAND ===
+async function runCommand(moduleId, action) {
+  const resultDiv = document.getElementById('cmdResult');
+  resultDiv.innerHTML = '<span class="loading">Ejecutando</span>';
+  try {
+    const result = await api(`/modules/${moduleId}/command`, {
+      method: 'POST',
+      body: JSON.stringify({ action, payload: {} }),
+    });
+    resultDiv.innerHTML = `
+      <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;margin-top:8px">
+        <div style="font-size:11px;color:var(--green);margin-bottom:6px;font-weight:700">✓ Respuesta</div>
+        <pre style="font-size:12px;color:var(--text);white-space:pre-wrap;font-family:Consolas,monospace">${JSON.stringify(result, null, 2)}</pre>
+      </div>
+    `;
+    refreshEvents();
+  } catch (e) {
+    resultDiv.innerHTML = `<div style="color:var(--red);font-size:13px">✗ Error: ${e.message}</div>`;
+  }
+}
+
+// === CHAT ===
+async function sendChat() {
+  const input = document.getElementById('chatInput');
+  const msg = input.value.trim();
+  if (!msg) return;
+
+  input.value = '';
+  const msgs = document.getElementById('chatMessages');
+
+  // User message
+  msgs.innerHTML += `<div class="chat-msg user">${escapeHtml(msg)}</div>`;
+  msgs.scrollTop = msgs.scrollHeight;
+
+  // Loading
+  const loadId = 'load-' + Date.now();
+  msgs.innerHTML += `<div class="chat-msg ai" id="${loadId}"><div class="sender">Selenia</div><span class="loading">Pensando</span></div>`;
+  msgs.scrollTop = msgs.scrollHeight;
+
+  document.getElementById('chatSend').disabled = true;
+
+  try {
+    const result = await api('/ai/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: msg }),
+    });
+    const el = document.getElementById(loadId);
+    if (el) {
+      el.innerHTML = `<div class="sender">Selenia</div>${formatAiResponse(result.message || JSON.stringify(result))}`;
+    }
+  } catch (e) {
+    const el = document.getElementById(loadId);
+    if (el) {
+      el.innerHTML = `<div class="sender">Selenia</div><span style="color:var(--red)">Error: ${e.message}. Asegurate de configurar OPENAI_API_KEY en .env</span>`;
+    }
+  }
+
+  document.getElementById('chatSend').disabled = false;
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+function formatAiResponse(text) {
+  return text
+    .replace(/\n/g, '<br>')
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    .replace(/`(.*?)`/g, '<code style="background:var(--bg);padding:1px 4px;border-radius:3px;font-size:12px">$1</code>');
+}
+
+function escapeHtml(text) {
+  const d = document.createElement('div');
+  d.textContent = text;
+  return d.innerHTML;
+}
+
+// === KEYBOARD ===
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeModal();
+});
+
+// === START ===
+init();
+</script>
+</body>
+</html>
