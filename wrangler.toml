@@ -13,7 +13,7 @@ CORE_V2_URL = "https://onbox-core-v2.soporte-a90.workers.dev"
 ONBOX_CORE_URL = "https://onbox-core.soporte-a90.workers.dev"
 ANTHROPIC_MODEL = "claude-sonnet-4-20250514"
 # Opcional: al escribir APROBADO_SELENIA en el chat → repository_dispatch en GitHub
-# GITHUB_REPO = "owner/repo"   # mismo repo donde vive .github/workflows/selenia-repository-dispatch.yml
+GITHUB_REPO = "maticabaleiro2012-create/selenia-dashboard"
 GITHUB_DISPATCH_EVENT = "selenia_approved"
 
 # Secrets opcionales:
