@@ -4,7 +4,7 @@ import { buildSystemPrompt } from './prompts.js';
  * Selenia on Cloudflare Workers:
  * - Serves static UI from [assets] public/
  * - POST /ai/chat → Anthropic (secret ANTHROPIC_API_KEY)
- * - GET /health, /events/history, POST /modules/:id/command (allowlist only)
+ * - GET /health, /events/history, GET /ops/overview, POST /modules/:id/command (allowlist only)
  *
  * No bash or terminal: Workers cannot spawn a shell. Commands are HTTP calls to your APIs.
  * Optional: APROBADO_SELENIA in chat → POST repository_dispatch (see README).
@@ -70,7 +70,10 @@ function ensureBootLogged() {
   bootLogged = true;
   pushEvent('selenia.boot', { version: '0.5.0-cf', provider: 'anthropic', runtime: 'cloudflare-worker' });
   Object.keys(MODULES_BASE).forEach((id) => pushEvent('module.registered', { id }));
-  pushEvent('gateway.ready', { mode: 'worker', routes: ['health', 'events', 'ai/chat', 'modules/*/command'] });
+  pushEvent('gateway.ready', {
+    mode: 'worker',
+    routes: ['health', 'events', 'ops/overview', 'ai/chat', 'modules/*/command'],
+  });
 }
 
 function json(data, status = 200, extraHeaders = {}) {
@@ -108,6 +111,35 @@ async function upstreamCore(env, path, init = {}) {
   return { ok: res.ok, status: res.status, json: j };
 }
 
+/** Plain GET with JSON parse — used for ops aggregation (Core v2 + legacy Core). */
+async function fetchJson(url, init, source, endpoint, onError) {
+  try {
+    const res = await fetch(url, init);
+    const text = await res.text();
+    let j = null;
+    try {
+      j = text ? JSON.parse(text) : null;
+    } catch {
+      j = { raw: text.slice(0, 800) };
+    }
+    if (!res.ok) {
+      const msg = (j && (j.error || j.message)) || text || res.statusText;
+      onError(source, endpoint, res.status, msg);
+    }
+    return { ok: res.ok, status: res.status, json: j };
+  } catch (e) {
+    onError(source, endpoint, 0, e?.message || String(e));
+    return { ok: false, status: 0, json: null };
+  }
+}
+
+function coreAuthHeaders(env) {
+  const h = new Headers();
+  const t = String(env.CORE_API_TOKEN || '').trim();
+  if (t) h.set('Authorization', `Bearer ${t}`);
+  return h;
+}
+
 async function buildHealth(env) {
   const uptime = Math.floor((Date.now() - WORKER_BOOT) / 1000);
   const core = await upstreamCore(env, '/health');
@@ -123,165 +155,231 @@ async function buildHealth(env) {
   return { uptime, modules };
 }
 
-function classifySeverity(input = '') {
-  const s = String(input || '').toLowerCase();
-  if (s.includes('critical') || s.includes('fatal') || s.includes('panic')) return 'critical';
-  if (s.includes('error') || s.includes('high')) return 'high';
-  if (s.includes('warn') || s.includes('medium')) return 'medium';
-  return 'info';
-}
-
-async function tryCorePaths(env, paths) {
-  for (const p of paths) {
-    const r = await upstreamCore(env, p);
-    if (r.ok && r.json) return { path: p, ...r };
-  }
-  return null;
-}
-
-function parseModuleMap(source) {
-  if (!source || typeof source !== 'object') return null;
-  if (source.modules && typeof source.modules === 'object') return source.modules;
-  if (source.data && source.data.modules && typeof source.data.modules === 'object') return source.data.modules;
-  if (source.services && typeof source.services === 'object') return source.services;
-  return null;
-}
-
-function toIncidentList(input) {
-  const arr = Array.isArray(input) ? input : [];
-  return arr
-    .map((x, i) => {
-      const title = x.title || x.name || x.type || `incident-${i + 1}`;
-      const sev = classifySeverity(x.severity || x.level || x.status || title);
-      return {
-        id: x.id || `${title}-${i}`,
-        title: String(title),
-        severity: sev,
-        status: x.status || 'open',
-        owner: x.owner || x.team || 'n/a',
-        openedAt: x.openedAt || x.createdAt || x.ts || Date.now(),
-      };
-    })
-    .slice(0, 20);
-}
-
-function moduleFromFallback(id, moduleData, history) {
-  const status = moduleData?.status || 'booting';
-  const events = Array.isArray(history)
-    ? history.filter((e) => JSON.stringify(e.payload || {}).includes(id))
-    : [];
-  const errors = events.filter((e) => String(e.type || '').includes('error')).length;
-  const event5m = events.filter((e) => Date.now() - Number(e.meta?.timestamp || 0) <= 5 * 60 * 1000).length;
-  const slo = Math.max(90, 99.7 - (status !== 'running' ? 2.1 : 0) - errors * 0.06);
-  const latencyP95 = Math.round(130 + (status !== 'running' ? 80 : 0) + errors * 12 + (id.length % 9));
-  return {
-    id,
-    name: moduleData?.manifest?.name || id,
-    status,
-    slo: Number(slo.toFixed(2)),
-    latencyP95,
-    event5m,
-    errors5m: errors,
-    queueDepth: Math.max(0, Math.round(event5m * 0.3 + errors * 2)),
-    heartbeatSec: 6 + ((id.length + event5m) % 21),
-  };
-}
-
+/**
+ * Ops overview — solo fuentes documentadas (core-v2 README + fulfillment-api + onbox-core README).
+ * No heurísticas ni “probe” de rutas inventadas. Si falla una llamada, queda registro en `errors[]`
+ * y el resto de bloques puede venir parcial.
+ */
 async function buildOpsOverview(env) {
+  const errors = [];
+  const pushErr = (source, endpoint, status, message) => {
+    errors.push({
+      source,
+      endpoint,
+      status: status || 0,
+      message: String(message || '').slice(0, 500),
+    });
+  };
+
   const health = await buildHealth(env);
-  const history = events.slice(-400);
+  const cv2Base = String(env.CORE_V2_URL || '').replace(/\/$/, '');
+  const legacyBase = String(env.ONBOX_CORE_URL || 'https://onbox-core.soporte-a90.workers.dev').replace(/\/$/, '');
+  const token = String(env.CORE_API_TOKEN || '').trim();
+  const authH = coreAuthHeaders(env);
 
-  const modulesRes = await tryCorePaths(env, [
-    '/ops/modules',
-    '/modules/health',
-    '/modules/status',
-    '/health/modules',
-  ]);
-  const incidentsRes = await tryCorePaths(env, [
-    '/ops/incidents',
-    '/incidents/open',
-    '/alerts/active',
-    '/alerts',
-  ]);
-  const metricsRes = await tryCorePaths(env, [
-    '/ops/metrics',
-    '/metrics/summary',
-    '/metrics',
-    '/stats',
-  ]);
-
-  const defaultModules = Object.fromEntries(
-    Object.entries(health.modules || {}).map(([id, m]) => [id, moduleFromFallback(id, m, history)])
-  );
-
-  const coreModuleMap = parseModuleMap(modulesRes?.json);
-  const modules = coreModuleMap
-    ? Object.entries(coreModuleMap).map(([id, m]) => {
-        const status = m.status || m.state || (m.ok === false ? 'error' : 'running');
-        return {
-          id,
-          name: m.name || m.displayName || m.manifest?.name || id,
-          status,
-          slo: Number((m.slo ?? m.availability ?? defaultModules[id]?.slo ?? 98.8).toFixed(2)),
-          latencyP95: Number(m.p95 ?? m.latencyP95 ?? defaultModules[id]?.latencyP95 ?? 150),
-          event5m: Number(m.event5m ?? m.events5m ?? defaultModules[id]?.event5m ?? 0),
-          errors5m: Number(m.errors5m ?? m.errorCount ?? defaultModules[id]?.errors5m ?? 0),
-          queueDepth: Number(m.queueDepth ?? m.queue ?? defaultModules[id]?.queueDepth ?? 0),
-          heartbeatSec: Number(m.heartbeatSec ?? m.heartbeat ?? defaultModules[id]?.heartbeatSec ?? 15),
-        };
-      })
-    : Object.values(defaultModules);
+  if (!cv2Base) {
+    pushErr('selenia-worker', 'env.CORE_V2_URL', 0, 'CORE_V2_URL not configured');
+  }
 
   const now = Date.now();
-  const total = modules.length || 1;
-  const running = modules.filter((m) => m.status === 'running').length;
-  const availability = Number(((running / total) * 100).toFixed(2));
-  const latencyP95 = Math.round(modules.reduce((a, m) => a + (m.latencyP95 || 0), 0) / total);
-  const errors5m = modules.reduce((a, m) => a + (m.errors5m || 0), 0);
-  const queueDepth = modules.reduce((a, m) => a + (m.queueDepth || 0), 0);
-  const throughputPerMin = modules.reduce((a, m) => a + (m.event5m || 0), 0);
-  const mttrMin = errors5m > 0 ? Math.min(90, 12 + errors5m * 2) : 4;
-
-  const incFromCore =
-    incidentsRes?.json?.incidents ||
-    incidentsRes?.json?.alerts ||
-    incidentsRes?.json?.items ||
-    incidentsRes?.json?.data ||
-    incidentsRes?.json;
-  const incidents = toIncidentList(incFromCore);
-  if (!incidents.length) {
-    modules
-      .filter((m) => m.status !== 'running')
-      .slice(0, 6)
-      .forEach((m, i) =>
-        incidents.push({
-          id: `${m.id}-${i}`,
-          title: `${m.name}: estado ${m.status}`,
-          severity: m.status === 'error' ? 'critical' : 'high',
-          status: 'open',
-          owner: 'ops',
-          openedAt: now - (i + 1) * 60 * 1000,
-        })
-      );
-  }
-
-  const metricPayload = metricsRes?.json?.metrics || metricsRes?.json?.data || metricsRes?.json || {};
-  const summary = {
-    availability: Number(metricPayload.availability ?? metricPayload.slo ?? availability),
-    errorRate: Number(metricPayload.errorRate ?? (throughputPerMin > 0 ? (errors5m / throughputPerMin) * 100 : 0)).toFixed(2),
-    latencyP95: Number(metricPayload.latencyP95 ?? metricPayload.p95 ?? latencyP95),
-    queueDepth: Number(metricPayload.queueDepth ?? metricPayload.queue ?? queueDepth),
-    throughputPerMin: Number(metricPayload.throughputPerMin ?? metricPayload.rpm ?? throughputPerMin),
-    mttrMin: Number(metricPayload.mttrMin ?? metricPayload.mttr ?? mttrMin),
-    activeAlerts: incidents.filter((i) => i.status !== 'closed').length,
-    source: {
-      modules: modulesRes?.path || 'fallback:/health',
-      incidents: incidentsRes?.path || 'fallback:derived',
-      metrics: metricsRes?.path || 'fallback:derived',
+  const empty = {
+    generatedAt: now,
+    errors,
+    contract: 'core-v2 README + docs/fulfillment-api.md + onbox-core README',
+    summary: {
+      availability: null,
+      errorRate: null,
+      latencyP95: null,
+      queueDepth: null,
+      throughputPerMin: null,
+      ordersMonitorCount: null,
+      mttrMin: null,
+      activeAlerts: 0,
+      inventory: { onbox: null, fulfillment: null },
+      depositsCount: null,
     },
+    services: [],
+    modules: Object.entries(health.modules || {}).map(([id, data]) => ({
+      id,
+      name: data.manifest?.name || id,
+      status: data.status,
+      slo: null,
+      latencyP95: null,
+      event5m: null,
+      errors5m: null,
+      queueDepth: null,
+      heartbeatSec: null,
+    })),
+    incidents: [],
   };
 
-  return { generatedAt: now, summary, modules, incidents };
+  if (!cv2Base) {
+    return empty;
+  }
+
+  const authAuditPromise = token
+    ? fetchJson(`${cv2Base}/clients/auth-audit`, { headers: authH }, 'core-v2', '/clients/auth-audit', pushErr)
+    : Promise.resolve({ ok: false, status: 0, json: null });
+
+  if (!token) {
+    pushErr('selenia-worker', '/ops/overview', 0, 'CORE_API_TOKEN not set: omitiendo /clients/auth-audit (requiere Bearer en core-v2)');
+  }
+
+  const [
+    cv2Health,
+    legacyHealth,
+    invOnbox,
+    invFulfillment,
+    ordersMon,
+    authAudit,
+    deposits,
+  ] = await Promise.all([
+    fetchJson(`${cv2Base}/health`, { method: 'GET' }, 'core-v2', '/health', pushErr),
+    fetchJson(`${legacyBase}/health`, { method: 'GET' }, 'onbox-core', '/health', pushErr),
+    fetchJson(
+      `${cv2Base}/inventory/summary?location=onbox&byLocation=true&limit=2000`,
+      { method: 'GET', headers: authH },
+      'core-v2',
+      '/inventory/summary?location=onbox',
+      pushErr
+    ),
+    fetchJson(
+      `${cv2Base}/inventory/summary?location=fulfillment&byLocation=true&limit=2000`,
+      { method: 'GET', headers: authH },
+      'core-v2',
+      '/inventory/summary?location=fulfillment',
+      pushErr
+    ),
+    fetchJson(
+      `${cv2Base}/orders/monitor?all=1`,
+      { method: 'GET', headers: authH },
+      'core-v2',
+      '/orders/monitor?all=1',
+      pushErr
+    ),
+    authAuditPromise,
+    fetchJson(`${cv2Base}/deposits`, { method: 'GET', headers: authH }, 'core-v2', '/deposits', pushErr),
+  ]);
+
+  const sumQty = (items) =>
+    (Array.isArray(items) ? items : []).reduce((a, r) => a + (Number(r?.total_available) || 0), 0);
+  const skuRows = (items) => (Array.isArray(items) ? items.length : 0);
+
+  const itemsOnbox = invOnbox.ok && invOnbox.json && Array.isArray(invOnbox.json.items) ? invOnbox.json.items : [];
+  const itemsFulfillment =
+    invFulfillment.ok && invFulfillment.json && Array.isArray(invFulfillment.json.items) ? invFulfillment.json.items : [];
+
+  const ordersArr =
+    ordersMon.ok && ordersMon.json && Array.isArray(ordersMon.json.data?.orders)
+      ? ordersMon.json.data.orders
+      : ordersMon.ok && ordersMon.json && Array.isArray(ordersMon.json.orders)
+        ? ordersMon.json.orders
+        : [];
+  const ordersMonitorCount = ordersArr.length;
+
+  const cv2Ok = !!(cv2Health.ok && cv2Health.json && cv2Health.json.ok !== false);
+  const legacyOk = !!(legacyHealth.ok && legacyHealth.json && legacyHealth.json.ok !== false);
+  const availability = cv2Ok && legacyOk ? 100 : cv2Ok || legacyOk ? 85 : 0;
+
+  const withoutPw =
+    token && authAudit.ok && authAudit.json && authAudit.json.ok !== false
+      ? Number(authAudit.json.without_password_hash || 0)
+      : null;
+  const totalClients =
+    token && authAudit.ok && authAudit.json && authAudit.json.ok !== false ? Number(authAudit.json.total || 0) : null;
+
+  const errorRate =
+    totalClients != null && totalClients > 0 && withoutPw != null
+      ? Number(((withoutPw / totalClients) * 100).toFixed(2))
+      : null;
+
+  const depositsList =
+    deposits.ok && deposits.json && Array.isArray(deposits.json.deposits) ? deposits.json.deposits : [];
+  const depositsCount = deposits.ok ? depositsList.length : null;
+
+  const incidents = [];
+  if (!cv2Ok) {
+    incidents.push({
+      id: 'core-v2-health',
+      title: 'Core v2: /health no OK',
+      severity: 'high',
+      status: 'open',
+      owner: 'platform',
+      openedAt: now,
+    });
+  }
+  if (!legacyOk) {
+    incidents.push({
+      id: 'onbox-core-health',
+      title: 'Onbox Core (legacy): /health no OK',
+      severity: 'high',
+      status: 'open',
+      owner: 'platform',
+      openedAt: now,
+    });
+  }
+  if (withoutPw != null && withoutPw > 0) {
+    incidents.push({
+      id: 'clients-without-password',
+      title: `${withoutPw} clientes sin password_hash (Neon)`,
+      severity: withoutPw > 5 ? 'high' : 'medium',
+      status: 'open',
+      owner: 'security',
+      openedAt: now,
+    });
+  }
+
+  const services = [
+    {
+      id: 'core-v2',
+      name: 'Core v2 (Neon)',
+      status: cv2Ok ? 'running' : 'error',
+      neon: !!(cv2Health.json && cv2Health.json.neon),
+      endpoint: '/health',
+    },
+    {
+      id: 'onbox-core',
+      name: 'Onbox Core (legacy)',
+      status: legacyOk ? 'running' : 'error',
+      endpoint: '/health',
+    },
+  ];
+
+  const modules = Object.entries(health.modules || {}).map(([id, data]) => ({
+    id,
+    name: data.manifest?.name || id,
+    status: data.status,
+    slo: null,
+    latencyP95: null,
+    event5m: null,
+    errors5m: null,
+    queueDepth: null,
+    heartbeatSec: null,
+  }));
+
+  return {
+    generatedAt: now,
+    errors,
+    contract: 'core-v2 README + docs/fulfillment-api.md + onbox-core README',
+    summary: {
+      availability,
+      errorRate,
+      latencyP95: null,
+      queueDepth: null,
+      throughputPerMin: null,
+      ordersMonitorCount,
+      mttrMin: null,
+      activeAlerts: incidents.length,
+      inventory: {
+        onbox: { skuRows: skuRows(itemsOnbox), totalUnits: sumQty(itemsOnbox) },
+        fulfillment: { skuRows: skuRows(itemsFulfillment), totalUnits: sumQty(itemsFulfillment) },
+      },
+      depositsCount,
+    },
+    services,
+    modules,
+    incidents,
+  };
 }
 
 const MAX_CHAT_MESSAGES = 24;

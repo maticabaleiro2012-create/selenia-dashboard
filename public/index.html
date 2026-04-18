@@ -268,6 +268,19 @@
   }
   .quick-actions button:hover { border-color: var(--border-bright); background: var(--surface-hover); }
 
+  .ops-errors {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--border);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--orange);
+    line-height: 1.45;
+    max-height: 72px;
+    overflow-y: auto;
+  }
+  .ops-errors:empty { display: none; }
+
   .module-matrix {
     display: grid;
     gap: 8px;
@@ -626,7 +639,7 @@
       </div>
       <div class="metric-card">
         <div class="value" id="metricRequests">-</div>
-        <div class="label">Throughput/min</div>
+        <div class="label">Pedidos (monitor)</div>
         <div class="trend neutral" id="metricRequestsTrend">--</div>
       </div>
       <div class="metric-card">
@@ -654,9 +667,10 @@
           <div class="health-item"><div class="k">Error rate</div><div class="v" id="healthErrorRate">-</div></div>
           <div class="health-item"><div class="k">Latencia p95</div><div class="v" id="healthLatency">-</div></div>
           <div class="health-item"><div class="k">Cola pendiente</div><div class="v" id="healthQueue">-</div></div>
-          <div class="health-item"><div class="k">Eventos/min</div><div class="v" id="healthThroughput">-</div></div>
+          <div class="health-item"><div class="k">Pedidos (monitor)</div><div class="v" id="healthThroughput">-</div></div>
           <div class="health-item"><div class="k">MTTR estimado</div><div class="v" id="healthMttr">-</div></div>
         </div>
+        <div class="ops-errors" id="opsErrors" hidden></div>
       </div>
       <div class="ops-side">
         <div class="ops-panel">
@@ -797,6 +811,10 @@ let latestModules = {};
 let latestHistory = [];
 let opsOverview = null;
 
+function isStrictOpsOverview(ov) {
+  return !!(ov && ov.contract && ov.contract !== 'demo');
+}
+
 // === DEMO DATA ===
 const DEMO_MODULES = {
   gastronomia: { status: 'running', manifest: { name: 'Gastronomía OnBox', commands: ['listar-pedidos','nuevo-pedido','estado-cocina','asignar-delivery','menu-del-dia','reservar-mesa','carta-qr','dashboard'] } },
@@ -923,28 +941,57 @@ async function refreshStatus() {
   latestModules = mods;
   const running = Object.values(mods).filter(v => v.status === 'running').length;
   const total = Object.keys(mods).length || 1;
-  const errors = Object.values(mods).filter(v => v.status === 'error').length;
-  const availability = Number(opsOverview?.summary?.availability ?? ((running / total) * 100));
+  const modErrors = Object.values(mods).filter(v => v.status === 'error').length;
+  const strictOps = isStrictOpsOverview(opsOverview);
   const recent = latestHistory.slice(-15);
   const recentErrors = recent.filter((e) => (e.type || '').includes('error')).length;
-  const throughput = Number(opsOverview?.summary?.throughputPerMin ?? Math.max(1, Math.round((recent.length / 5) * 60)));
-  const p95 = Number(opsOverview?.summary?.latencyP95 ?? Math.round(120 + (total - running) * 30 + recentErrors * 18));
-  const alerts = Number(opsOverview?.summary?.activeAlerts ?? errors);
-  const errorRate = Number(opsOverview?.summary?.errorRate ?? (recent.length ? ((recentErrors / recent.length) * 100).toFixed(2) : 0));
 
   document.getElementById('metricModules').textContent = running;
   document.getElementById('metricEvents').textContent = stats.historySize || 0;
-  document.getElementById('metricRequests').textContent = throughput;
-  document.getElementById('metricErrors').textContent = alerts;
-  document.getElementById('metricAvailability').textContent = `${availability.toFixed(1)}%`;
-  document.getElementById('metricP95').textContent = `${p95}ms`;
 
-  setTrend('metricModulesTrend', running === total ? 'up' : 'neutral', running === total ? 'estable' : `${total - running} con riesgo`);
-  setTrend('metricEventsTrend', eventCount > 0 ? 'up' : 'neutral', `${eventCount || 0} históricos`);
-  setTrend('metricRequestsTrend', 'neutral', 'estimado');
-  setTrend('metricErrorsTrend', alerts > 0 ? 'down' : 'up', alerts > 0 ? `${alerts} activas` : 'sin alertas');
-  setTrend('metricAvailabilityTrend', availability >= 99 ? 'up' : availability >= 96 ? 'neutral' : 'down', availability >= 99 ? 'SLO ok' : 'degradado');
-  setTrend('metricP95Trend', p95 > 260 ? 'down' : p95 > 200 ? 'neutral' : 'up', p95 > 260 ? 'alto' : 'normal');
+  if (strictOps && opsOverview.summary) {
+    const s = opsOverview.summary;
+    const availability = s.availability;
+    const mon = s.ordersMonitorCount;
+    const alerts = Number(s.activeAlerts ?? 0);
+    const p95 = s.latencyP95;
+
+    document.getElementById('metricAvailability').textContent =
+      availability != null ? `${Number(availability).toFixed(1)}%` : '—';
+    document.getElementById('metricRequests').textContent = mon != null ? String(mon) : '—';
+    document.getElementById('metricErrors').textContent = String(alerts);
+    document.getElementById('metricP95').textContent = p95 != null ? `${p95}ms` : '—';
+
+    setTrend('metricModulesTrend', running === total ? 'up' : 'neutral', running === total ? 'estable' : `${total - running} con riesgo`);
+    setTrend('metricEventsTrend', eventCount > 0 ? 'up' : 'neutral', `${eventCount || 0} históricos`);
+    setTrend('metricRequestsTrend', mon != null ? 'up' : 'neutral', mon != null ? 'core-v2 /orders/monitor' : 'sin dato');
+    setTrend('metricErrorsTrend', alerts > 0 ? 'down' : 'up', alerts > 0 ? `${alerts} señales` : 'sin señales');
+    setTrend(
+      'metricAvailabilityTrend',
+      availability == null ? 'neutral' : availability >= 99 ? 'up' : availability >= 96 ? 'neutral' : 'down',
+      availability == null ? 'n/d' : availability >= 99 ? 'APIs OK' : 'revisar'
+    );
+    setTrend('metricP95Trend', p95 == null ? 'neutral' : p95 > 260 ? 'down' : p95 > 200 ? 'neutral' : 'up', p95 == null ? 'no expuesto' : p95 > 260 ? 'alto' : 'normal');
+  } else {
+    const availability = Number(opsOverview?.summary?.availability ?? ((running / total) * 100));
+    const throughput = Number(
+      opsOverview?.summary?.throughputPerMin ?? Math.max(1, Math.round((recent.length / 5) * 60))
+    );
+    const p95 = Number(opsOverview?.summary?.latencyP95 ?? Math.round(120 + (total - running) * 30 + recentErrors * 18));
+    const alerts = Number(opsOverview?.summary?.activeAlerts ?? modErrors);
+
+    document.getElementById('metricRequests').textContent = throughput;
+    document.getElementById('metricErrors').textContent = alerts;
+    document.getElementById('metricAvailability').textContent = `${availability.toFixed(1)}%`;
+    document.getElementById('metricP95').textContent = `${p95}ms`;
+
+    setTrend('metricModulesTrend', running === total ? 'up' : 'neutral', running === total ? 'estable' : `${total - running} con riesgo`);
+    setTrend('metricEventsTrend', eventCount > 0 ? 'up' : 'neutral', `${eventCount || 0} históricos`);
+    setTrend('metricRequestsTrend', 'neutral', 'estimado');
+    setTrend('metricErrorsTrend', alerts > 0 ? 'down' : 'up', alerts > 0 ? `${alerts} activas` : 'sin alertas');
+    setTrend('metricAvailabilityTrend', availability >= 99 ? 'up' : availability >= 96 ? 'neutral' : 'down', availability >= 99 ? 'SLO ok' : 'degradado');
+    setTrend('metricP95Trend', p95 > 260 ? 'down' : p95 > 200 ? 'neutral' : 'up', p95 > 260 ? 'alto' : 'normal');
+  }
 
   // Module cards
   renderModules(mods);
@@ -964,6 +1011,20 @@ function renderModules(mods) {
     card.dataset.module = id;
     card.onclick = () => openModule(id, data);
 
+    const ov = getModuleOverview(id);
+    const strict = isStrictOpsOverview(opsOverview);
+    const sloTxt = strict
+      ? ov?.slo != null
+        ? Number(ov.slo).toFixed(1)
+        : '—'
+      : ov?.slo?.toFixed
+        ? ov.slo.toFixed(1)
+        : computeModuleSlo(id, data.status);
+    const evTxt = strict
+      ? ov?.event5m != null
+        ? String(ov.event5m)
+        : '—'
+      : String(getModuleOverview(id)?.event5m ?? computeModuleTraffic(id, latestHistory));
     const statusClass = data.status === 'running' ? 'running' : data.status === 'error' ? 'error' : 'booting';
 
     card.innerHTML = `
@@ -975,8 +1036,8 @@ function renderModules(mods) {
       <div class="mod-desc">${meta.desc}</div>
       <div class="mod-stats">
         <div class="mod-stat">Cmds: <span class="num">${data.manifest?.commands?.length || 0}</span></div>
-        <div class="mod-stat">SLO: <span class="num">${getModuleOverview(id)?.slo?.toFixed ? getModuleOverview(id).slo.toFixed(1) : computeModuleSlo(id, data.status)}%</span></div>
-        <div class="mod-stat">5m: <span class="num">${getModuleOverview(id)?.event5m ?? computeModuleTraffic(id, latestHistory)}</span></div>
+        <div class="mod-stat">SLO: <span class="num">${sloTxt === '—' ? '—' : `${sloTxt}%`}</span></div>
+        <div class="mod-stat">5m: <span class="num">${evTxt}</span></div>
       </div>
     `;
     grid.appendChild(card);
@@ -1051,13 +1112,24 @@ function renderModuleMatrix(mods, history, overview) {
   const rows = [
     `<div class="module-row header"><div>Módulo</div><div>Estado</div><div>SLO</div><div>Eventos 5m</div><div>HeartBeat</div></div>`
   ];
+  const strict = isStrictOpsOverview(overview);
   for (const [id, data] of entries) {
     const ov = getModuleOverview(id, overview);
     const name = data.manifest?.name || id;
     const status = data.status || 'booting';
-    const slo = `${Number(ov?.slo ?? computeModuleSlo(id, status)).toFixed(1)}%`;
-    const ev5m = Number(ov?.event5m ?? computeModuleTraffic(id, history));
-    const heartbeat = `${Number(ov?.heartbeatSec ?? (8 + ((id.charCodeAt(0) + ev5m) % 24)))}s`;
+    const slo = strict
+      ? ov?.slo != null
+        ? `${Number(ov.slo).toFixed(1)}%`
+        : '—'
+      : `${Number(ov?.slo ?? computeModuleSlo(id, status)).toFixed(1)}%`;
+    const ev5m = strict
+      ? ov?.event5m != null
+        ? String(ov.event5m)
+        : '—'
+      : String(ov?.event5m ?? computeModuleTraffic(id, history));
+    const heartbeat = strict
+      ? '—'
+      : `${Number(ov?.heartbeatSec ?? (8 + ((id.charCodeAt(0) + Number(ev5m) || 0) % 24)))}s`;
     rows.push(`
       <div class="module-row">
         <div>${name}</div>
@@ -1071,11 +1143,55 @@ function renderModuleMatrix(mods, history, overview) {
   matrix.innerHTML = rows.join('');
 }
 
+function renderOpsErrors(overview) {
+  const el = document.getElementById('opsErrors');
+  if (!el) return;
+  const list = overview && overview.errors;
+  if (!Array.isArray(list) || !list.length) {
+    el.textContent = '';
+    el.hidden = true;
+    return;
+  }
+  el.hidden = false;
+  el.textContent = list
+    .slice(0, 8)
+    .map((e) => `${e.source} ${e.endpoint} [${e.status}]: ${e.message}`)
+    .join('\n');
+}
+
 function renderOpsPanels(mods, history, overview) {
   const moduleValues = Object.values(mods || {});
   if (!moduleValues.length) return;
   const total = moduleValues.length;
   const running = moduleValues.filter((m) => m.status === 'running').length;
+  const strict = isStrictOpsOverview(overview);
+
+  if (strict && overview.summary) {
+    const s = overview.summary;
+    setText('healthAvailability', s.availability != null ? `${Number(s.availability).toFixed(2)}%` : '—');
+    setText('healthErrorRate', s.errorRate != null ? `${Number(s.errorRate).toFixed(2)}%` : '—');
+    setText('healthLatency', s.latencyP95 != null ? `${s.latencyP95}ms` : '—');
+    setText('healthQueue', s.queueDepth != null ? String(s.queueDepth) : '—');
+    setText('healthThroughput', s.ordersMonitorCount != null ? String(s.ordersMonitorCount) : '—');
+    setText('healthMttr', s.mttrMin != null ? `${s.mttrMin}m` : '—');
+
+    const incidents = (overview.incidents || []).map((i) => ({
+      sev: i.severity || 'medium',
+      text: `${i.title}${i.owner ? ` · ${i.owner}` : ''}`,
+    }));
+    if (!incidents.length) {
+      incidents.push({ sev: 'info', text: 'Sin incidentes derivados de APIs documentadas' });
+    }
+    const list = document.getElementById('incidentList');
+    if (list) {
+      list.innerHTML = incidents.slice(0, 6).map((i) =>
+        `<div class="incident-item ${i.sev}"><span class="sev">${i.sev}</span>${i.text}</div>`
+      ).join('');
+    }
+    renderOpsErrors(overview);
+    return;
+  }
+
   const availability = Number(overview?.summary?.availability ?? ((running / total) * 100));
   const errors = moduleValues.filter((m) => m.status === 'error').length;
   const recent = (history || []).slice(-40);
@@ -1118,6 +1234,7 @@ function renderOpsPanels(mods, history, overview) {
       `<div class="incident-item ${i.sev}"><span class="sev">${i.sev}</span>${i.text}</div>`
     ).join('');
   }
+  renderOpsErrors(overview);
 }
 
 function getModuleOverview(id, overview = opsOverview) {
@@ -1140,16 +1257,24 @@ function buildDemoOpsOverview() {
   }));
   return {
     generatedAt: Date.now(),
+    contract: 'demo',
+    errors: [],
     summary: {
       availability: 99.82,
       errorRate: 0.12,
       latencyP95: 166,
       queueDepth: 2,
       throughputPerMin: 36,
+      ordersMonitorCount: 42,
       mttrMin: 5,
       activeAlerts: 0,
-      source: { modules: 'demo', incidents: 'demo', metrics: 'demo' },
+      inventory: { onbox: { skuRows: 120, totalUnits: 4800 }, fulfillment: { skuRows: 40, totalUnits: 900 } },
+      depositsCount: 4,
     },
+    services: [
+      { id: 'core-v2', name: 'Core v2 (demo)', status: 'running', endpoint: '/health' },
+      { id: 'onbox-core', name: 'Onbox Core (demo)', status: 'running', endpoint: '/health' },
+    ],
     modules: mods,
     incidents: [],
   };
