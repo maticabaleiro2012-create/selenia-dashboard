@@ -123,6 +123,167 @@ async function buildHealth(env) {
   return { uptime, modules };
 }
 
+function classifySeverity(input = '') {
+  const s = String(input || '').toLowerCase();
+  if (s.includes('critical') || s.includes('fatal') || s.includes('panic')) return 'critical';
+  if (s.includes('error') || s.includes('high')) return 'high';
+  if (s.includes('warn') || s.includes('medium')) return 'medium';
+  return 'info';
+}
+
+async function tryCorePaths(env, paths) {
+  for (const p of paths) {
+    const r = await upstreamCore(env, p);
+    if (r.ok && r.json) return { path: p, ...r };
+  }
+  return null;
+}
+
+function parseModuleMap(source) {
+  if (!source || typeof source !== 'object') return null;
+  if (source.modules && typeof source.modules === 'object') return source.modules;
+  if (source.data && source.data.modules && typeof source.data.modules === 'object') return source.data.modules;
+  if (source.services && typeof source.services === 'object') return source.services;
+  return null;
+}
+
+function toIncidentList(input) {
+  const arr = Array.isArray(input) ? input : [];
+  return arr
+    .map((x, i) => {
+      const title = x.title || x.name || x.type || `incident-${i + 1}`;
+      const sev = classifySeverity(x.severity || x.level || x.status || title);
+      return {
+        id: x.id || `${title}-${i}`,
+        title: String(title),
+        severity: sev,
+        status: x.status || 'open',
+        owner: x.owner || x.team || 'n/a',
+        openedAt: x.openedAt || x.createdAt || x.ts || Date.now(),
+      };
+    })
+    .slice(0, 20);
+}
+
+function moduleFromFallback(id, moduleData, history) {
+  const status = moduleData?.status || 'booting';
+  const events = Array.isArray(history)
+    ? history.filter((e) => JSON.stringify(e.payload || {}).includes(id))
+    : [];
+  const errors = events.filter((e) => String(e.type || '').includes('error')).length;
+  const event5m = events.filter((e) => Date.now() - Number(e.meta?.timestamp || 0) <= 5 * 60 * 1000).length;
+  const slo = Math.max(90, 99.7 - (status !== 'running' ? 2.1 : 0) - errors * 0.06);
+  const latencyP95 = Math.round(130 + (status !== 'running' ? 80 : 0) + errors * 12 + (id.length % 9));
+  return {
+    id,
+    name: moduleData?.manifest?.name || id,
+    status,
+    slo: Number(slo.toFixed(2)),
+    latencyP95,
+    event5m,
+    errors5m: errors,
+    queueDepth: Math.max(0, Math.round(event5m * 0.3 + errors * 2)),
+    heartbeatSec: 6 + ((id.length + event5m) % 21),
+  };
+}
+
+async function buildOpsOverview(env) {
+  const health = await buildHealth(env);
+  const history = events.slice(-400);
+
+  const modulesRes = await tryCorePaths(env, [
+    '/ops/modules',
+    '/modules/health',
+    '/modules/status',
+    '/health/modules',
+  ]);
+  const incidentsRes = await tryCorePaths(env, [
+    '/ops/incidents',
+    '/incidents/open',
+    '/alerts/active',
+    '/alerts',
+  ]);
+  const metricsRes = await tryCorePaths(env, [
+    '/ops/metrics',
+    '/metrics/summary',
+    '/metrics',
+    '/stats',
+  ]);
+
+  const defaultModules = Object.fromEntries(
+    Object.entries(health.modules || {}).map(([id, m]) => [id, moduleFromFallback(id, m, history)])
+  );
+
+  const coreModuleMap = parseModuleMap(modulesRes?.json);
+  const modules = coreModuleMap
+    ? Object.entries(coreModuleMap).map(([id, m]) => {
+        const status = m.status || m.state || (m.ok === false ? 'error' : 'running');
+        return {
+          id,
+          name: m.name || m.displayName || m.manifest?.name || id,
+          status,
+          slo: Number((m.slo ?? m.availability ?? defaultModules[id]?.slo ?? 98.8).toFixed(2)),
+          latencyP95: Number(m.p95 ?? m.latencyP95 ?? defaultModules[id]?.latencyP95 ?? 150),
+          event5m: Number(m.event5m ?? m.events5m ?? defaultModules[id]?.event5m ?? 0),
+          errors5m: Number(m.errors5m ?? m.errorCount ?? defaultModules[id]?.errors5m ?? 0),
+          queueDepth: Number(m.queueDepth ?? m.queue ?? defaultModules[id]?.queueDepth ?? 0),
+          heartbeatSec: Number(m.heartbeatSec ?? m.heartbeat ?? defaultModules[id]?.heartbeatSec ?? 15),
+        };
+      })
+    : Object.values(defaultModules);
+
+  const now = Date.now();
+  const total = modules.length || 1;
+  const running = modules.filter((m) => m.status === 'running').length;
+  const availability = Number(((running / total) * 100).toFixed(2));
+  const latencyP95 = Math.round(modules.reduce((a, m) => a + (m.latencyP95 || 0), 0) / total);
+  const errors5m = modules.reduce((a, m) => a + (m.errors5m || 0), 0);
+  const queueDepth = modules.reduce((a, m) => a + (m.queueDepth || 0), 0);
+  const throughputPerMin = modules.reduce((a, m) => a + (m.event5m || 0), 0);
+  const mttrMin = errors5m > 0 ? Math.min(90, 12 + errors5m * 2) : 4;
+
+  const incFromCore =
+    incidentsRes?.json?.incidents ||
+    incidentsRes?.json?.alerts ||
+    incidentsRes?.json?.items ||
+    incidentsRes?.json?.data ||
+    incidentsRes?.json;
+  const incidents = toIncidentList(incFromCore);
+  if (!incidents.length) {
+    modules
+      .filter((m) => m.status !== 'running')
+      .slice(0, 6)
+      .forEach((m, i) =>
+        incidents.push({
+          id: `${m.id}-${i}`,
+          title: `${m.name}: estado ${m.status}`,
+          severity: m.status === 'error' ? 'critical' : 'high',
+          status: 'open',
+          owner: 'ops',
+          openedAt: now - (i + 1) * 60 * 1000,
+        })
+      );
+  }
+
+  const metricPayload = metricsRes?.json?.metrics || metricsRes?.json?.data || metricsRes?.json || {};
+  const summary = {
+    availability: Number(metricPayload.availability ?? metricPayload.slo ?? availability),
+    errorRate: Number(metricPayload.errorRate ?? (throughputPerMin > 0 ? (errors5m / throughputPerMin) * 100 : 0)).toFixed(2),
+    latencyP95: Number(metricPayload.latencyP95 ?? metricPayload.p95 ?? latencyP95),
+    queueDepth: Number(metricPayload.queueDepth ?? metricPayload.queue ?? queueDepth),
+    throughputPerMin: Number(metricPayload.throughputPerMin ?? metricPayload.rpm ?? throughputPerMin),
+    mttrMin: Number(metricPayload.mttrMin ?? metricPayload.mttr ?? mttrMin),
+    activeAlerts: incidents.filter((i) => i.status !== 'closed').length,
+    source: {
+      modules: modulesRes?.path || 'fallback:/health',
+      incidents: incidentsRes?.path || 'fallback:derived',
+      metrics: metricsRes?.path || 'fallback:derived',
+    },
+  };
+
+  return { generatedAt: now, summary, modules, incidents };
+}
+
 const MAX_CHAT_MESSAGES = 24;
 
 function normalizeAnthropicMessages(raw) {
@@ -318,6 +479,16 @@ async function handleApi(request, env) {
     );
   }
 
+  if (method === 'GET' && pathname === '/ops/overview') {
+    try {
+      const body = await buildOpsOverview(env);
+      return json(body, 200, corsHeaders());
+    } catch (e) {
+      pushEvent('ops.overview.error', { message: e.message });
+      return json({ error: e.message }, 502, corsHeaders());
+    }
+  }
+
   if (method === 'POST' && pathname === '/ai/chat') {
     try {
       const body = await readJson(request);
@@ -375,6 +546,7 @@ function corsHeaders() {
 function isApiPath(pathname) {
   if (pathname === '/health') return true;
   if (pathname.startsWith('/events')) return true;
+  if (pathname === '/ops/overview') return true;
   if (pathname.startsWith('/ai/')) return true;
   if (pathname.startsWith('/modules/') && pathname.endsWith('/command')) return true;
   if (pathname === '/connectors/health') return true;

@@ -795,6 +795,7 @@ let pollInterval;
 let demoUptime = 0;
 let latestModules = {};
 let latestHistory = [];
+let opsOverview = null;
 
 // === DEMO DATA ===
 const DEMO_MODULES = {
@@ -833,6 +834,7 @@ async function api(path, opts = {}) {
     if (path === '/health') return { uptime: demoUptime, modules: DEMO_MODULES };
     if (path === '/events/stats') return { historySize: DEMO_EVENTS.length };
     if (path === '/events/history') return DEMO_EVENTS;
+    if (path === '/ops/overview') return buildDemoOpsOverview();
     if (path.startsWith('/ai/chat')) {
       let hint = '';
       try {
@@ -907,6 +909,7 @@ async function init() {
 async function refreshStatus() {
   const health = await api('/health');
   const stats = await api('/events/stats');
+  opsOverview = await api('/ops/overview').catch(() => null);
 
   // Uptime
   const secs = Math.floor(health.uptime);
@@ -921,30 +924,32 @@ async function refreshStatus() {
   const running = Object.values(mods).filter(v => v.status === 'running').length;
   const total = Object.keys(mods).length || 1;
   const errors = Object.values(mods).filter(v => v.status === 'error').length;
-  const availability = (running / total) * 100;
+  const availability = Number(opsOverview?.summary?.availability ?? ((running / total) * 100));
   const recent = latestHistory.slice(-15);
   const recentErrors = recent.filter((e) => (e.type || '').includes('error')).length;
-  const throughput = Math.max(1, Math.round((recent.length / 5) * 60));
-  const p95 = Math.round(120 + (total - running) * 30 + recentErrors * 18);
+  const throughput = Number(opsOverview?.summary?.throughputPerMin ?? Math.max(1, Math.round((recent.length / 5) * 60)));
+  const p95 = Number(opsOverview?.summary?.latencyP95 ?? Math.round(120 + (total - running) * 30 + recentErrors * 18));
+  const alerts = Number(opsOverview?.summary?.activeAlerts ?? errors);
+  const errorRate = Number(opsOverview?.summary?.errorRate ?? (recent.length ? ((recentErrors / recent.length) * 100).toFixed(2) : 0));
 
   document.getElementById('metricModules').textContent = running;
   document.getElementById('metricEvents').textContent = stats.historySize || 0;
   document.getElementById('metricRequests').textContent = throughput;
-  document.getElementById('metricErrors').textContent = errors;
+  document.getElementById('metricErrors').textContent = alerts;
   document.getElementById('metricAvailability').textContent = `${availability.toFixed(1)}%`;
   document.getElementById('metricP95').textContent = `${p95}ms`;
 
   setTrend('metricModulesTrend', running === total ? 'up' : 'neutral', running === total ? 'estable' : `${total - running} con riesgo`);
   setTrend('metricEventsTrend', eventCount > 0 ? 'up' : 'neutral', `${eventCount || 0} históricos`);
   setTrend('metricRequestsTrend', 'neutral', 'estimado');
-  setTrend('metricErrorsTrend', errors > 0 ? 'down' : 'up', errors > 0 ? `${errors} activos` : 'sin alertas');
+  setTrend('metricErrorsTrend', alerts > 0 ? 'down' : 'up', alerts > 0 ? `${alerts} activas` : 'sin alertas');
   setTrend('metricAvailabilityTrend', availability >= 99 ? 'up' : availability >= 96 ? 'neutral' : 'down', availability >= 99 ? 'SLO ok' : 'degradado');
   setTrend('metricP95Trend', p95 > 260 ? 'down' : p95 > 200 ? 'neutral' : 'up', p95 > 260 ? 'alto' : 'normal');
 
   // Module cards
   renderModules(mods);
-  renderModuleMatrix(mods, latestHistory);
-  renderOpsPanels(mods, latestHistory);
+  renderModuleMatrix(mods, latestHistory, opsOverview);
+  renderOpsPanels(mods, latestHistory, opsOverview);
 }
 
 // === RENDER MODULES ===
@@ -970,8 +975,8 @@ function renderModules(mods) {
       <div class="mod-desc">${meta.desc}</div>
       <div class="mod-stats">
         <div class="mod-stat">Cmds: <span class="num">${data.manifest?.commands?.length || 0}</span></div>
-        <div class="mod-stat">SLO: <span class="num">${computeModuleSlo(id, data.status)}%</span></div>
-        <div class="mod-stat">5m: <span class="num">${computeModuleTraffic(id, latestHistory)}</span></div>
+        <div class="mod-stat">SLO: <span class="num">${getModuleOverview(id)?.slo?.toFixed ? getModuleOverview(id).slo.toFixed(1) : computeModuleSlo(id, data.status)}%</span></div>
+        <div class="mod-stat">5m: <span class="num">${getModuleOverview(id)?.event5m ?? computeModuleTraffic(id, latestHistory)}</span></div>
       </div>
     `;
     grid.appendChild(card);
@@ -986,8 +991,8 @@ async function refreshEvents() {
 
   if (!history || history.length === 0) {
     stream.innerHTML = '<div style="color:var(--text2);text-align:center;padding:20px">Sin eventos todavía</div>';
-    renderOpsPanels(latestModules, latestHistory);
-    renderModuleMatrix(latestModules, latestHistory);
+    renderOpsPanels(latestModules, latestHistory, opsOverview);
+    renderModuleMatrix(latestModules, latestHistory, opsOverview);
     return;
   }
 
@@ -1011,8 +1016,8 @@ async function refreshEvents() {
       </div>
     `;
   }).join('');
-  renderOpsPanels(latestModules, latestHistory);
-  renderModuleMatrix(latestModules, latestHistory);
+  renderOpsPanels(latestModules, latestHistory, opsOverview);
+  renderModuleMatrix(latestModules, latestHistory, opsOverview);
 }
 
 function setTrend(id, cls, text) {
@@ -1035,7 +1040,7 @@ function computeModuleSlo(moduleId, status) {
   return Math.max(92, (base - penalty)).toFixed(1);
 }
 
-function renderModuleMatrix(mods, history) {
+function renderModuleMatrix(mods, history, overview) {
   const matrix = document.getElementById('moduleMatrix');
   if (!matrix) return;
   const entries = Object.entries(mods || {});
@@ -1047,11 +1052,12 @@ function renderModuleMatrix(mods, history) {
     `<div class="module-row header"><div>Módulo</div><div>Estado</div><div>SLO</div><div>Eventos 5m</div><div>HeartBeat</div></div>`
   ];
   for (const [id, data] of entries) {
+    const ov = getModuleOverview(id, overview);
     const name = data.manifest?.name || id;
     const status = data.status || 'booting';
-    const slo = `${computeModuleSlo(id, status)}%`;
-    const ev5m = computeModuleTraffic(id, history);
-    const heartbeat = `${8 + ((id.charCodeAt(0) + ev5m) % 24)}s`;
+    const slo = `${Number(ov?.slo ?? computeModuleSlo(id, status)).toFixed(1)}%`;
+    const ev5m = Number(ov?.event5m ?? computeModuleTraffic(id, history));
+    const heartbeat = `${Number(ov?.heartbeatSec ?? (8 + ((id.charCodeAt(0) + ev5m) % 24)))}s`;
     rows.push(`
       <div class="module-row">
         <div>${name}</div>
@@ -1065,20 +1071,20 @@ function renderModuleMatrix(mods, history) {
   matrix.innerHTML = rows.join('');
 }
 
-function renderOpsPanels(mods, history) {
+function renderOpsPanels(mods, history, overview) {
   const moduleValues = Object.values(mods || {});
   if (!moduleValues.length) return;
   const total = moduleValues.length;
   const running = moduleValues.filter((m) => m.status === 'running').length;
-  const availability = ((running / total) * 100);
+  const availability = Number(overview?.summary?.availability ?? ((running / total) * 100));
   const errors = moduleValues.filter((m) => m.status === 'error').length;
   const recent = (history || []).slice(-40);
   const errEvents = recent.filter((e) => (e.type || '').includes('error')).length;
-  const errorRate = recent.length ? (errEvents / recent.length) * 100 : 0;
-  const latency = Math.round(140 + (total - running) * 35 + errEvents * 22);
-  const throughput = Math.round((recent.length / 10) * 60);
-  const queue = Math.max(0, Math.round(errEvents * 3 + (total - running) * 4 + recent.length * 0.08));
-  const mttr = errors > 0 ? `${12 + errors * 7}m` : '4m';
+  const errorRate = Number(overview?.summary?.errorRate ?? (recent.length ? (errEvents / recent.length) * 100 : 0));
+  const latency = Number(overview?.summary?.latencyP95 ?? Math.round(140 + (total - running) * 35 + errEvents * 22));
+  const throughput = Number(overview?.summary?.throughputPerMin ?? Math.round((recent.length / 10) * 60));
+  const queue = Number(overview?.summary?.queueDepth ?? Math.max(0, Math.round(errEvents * 3 + (total - running) * 4 + recent.length * 0.08)));
+  const mttr = `${Number(overview?.summary?.mttrMin ?? (errors > 0 ? 12 + errors * 7 : 4))}m`;
 
   setText('healthAvailability', `${availability.toFixed(2)}%`);
   setText('healthErrorRate', `${errorRate.toFixed(1)}%`);
@@ -1087,18 +1093,23 @@ function renderOpsPanels(mods, history) {
   setText('healthThroughput', String(Math.max(1, throughput)));
   setText('healthMttr', mttr);
 
-  const incidents = [];
-  for (const [id, data] of Object.entries(mods)) {
-    if (data.status !== 'running') {
-      const sev = data.status === 'error' ? 'critical' : 'high';
-      incidents.push({ sev, text: `${id}: estado ${data.status}` });
+  const incidents = (overview?.incidents || []).map((i) => ({
+    sev: i.severity || 'medium',
+    text: `${i.title}${i.owner ? ` · ${i.owner}` : ''}`,
+  }));
+  if (!incidents.length) {
+    for (const [id, data] of Object.entries(mods)) {
+      if (data.status !== 'running') {
+        const sev = data.status === 'error' ? 'critical' : 'high';
+        incidents.push({ sev, text: `${id}: estado ${data.status}` });
+      }
     }
+    recent.slice().reverse().forEach((ev) => {
+      if ((ev.type || '').includes('error') && incidents.length < 4) {
+        incidents.push({ sev: 'medium', text: `${ev.type}` });
+      }
+    });
   }
-  recent.slice().reverse().forEach((ev) => {
-    if ((ev.type || '').includes('error') && incidents.length < 4) {
-      incidents.push({ sev: 'medium', text: `${ev.type}` });
-    }
-  });
   if (!incidents.length) incidents.push({ sev: 'info', text: 'Sin incidentes abiertos' });
 
   const list = document.getElementById('incidentList');
@@ -1107,6 +1118,41 @@ function renderOpsPanels(mods, history) {
       `<div class="incident-item ${i.sev}"><span class="sev">${i.sev}</span>${i.text}</div>`
     ).join('');
   }
+}
+
+function getModuleOverview(id, overview = opsOverview) {
+  const list = overview?.modules;
+  if (!Array.isArray(list)) return null;
+  return list.find((m) => m.id === id) || null;
+}
+
+function buildDemoOpsOverview() {
+  const mods = Object.entries(DEMO_MODULES).map(([id, m]) => ({
+    id,
+    name: m.manifest?.name || id,
+    status: m.status,
+    slo: Number(computeModuleSlo(id, m.status)),
+    latencyP95: 140 + (id.length % 25),
+    event5m: computeModuleTraffic(id, DEMO_EVENTS),
+    errors5m: 0,
+    queueDepth: 0,
+    heartbeatSec: 10 + (id.length % 9),
+  }));
+  return {
+    generatedAt: Date.now(),
+    summary: {
+      availability: 99.82,
+      errorRate: 0.12,
+      latencyP95: 166,
+      queueDepth: 2,
+      throughputPerMin: 36,
+      mttrMin: 5,
+      activeAlerts: 0,
+      source: { modules: 'demo', incidents: 'demo', metrics: 'demo' },
+    },
+    modules: mods,
+    incidents: [],
+  };
 }
 
 function setText(id, value) {
