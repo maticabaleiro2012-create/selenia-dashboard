@@ -5,12 +5,17 @@
   "description": "Selenia Command Center — static UI + local API (Claude / Anthropic)",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js"
+    "dev": "node --watch server.js",
+    "cf:dev": "wrangler dev",
+    "deploy": "wrangler deploy"
   },
   "engines": {
     "node": ">=18"
   },
   "dependencies": {
     "dotenv": "^16.4.7"
+  },
+  "devDependencies": {
+    "wrangler": "^4.28.0"
   }
 }

@@ -1,0 +1,17 @@
+# Selenia — Cloudflare Worker (API + static UI)
+# Secrets: wrangler secret put ANTHROPIC_API_KEY
+#           wrangler secret put CORE_API_TOKEN   (opcional; si Core exige Bearer)
+#
+# Deploy: npm run deploy
+
+name = "selenia-command-center"
+main = "worker/src/index.js"
+compatibility_date = "2024-11-01"
+
+[vars]
+CORE_V2_URL = "https://onbox-core-v2.soporte-a90.workers.dev"
+ANTHROPIC_MODEL = "claude-sonnet-4-20250514"
+
+[assets]
+directory = "public"
+binding = "ASSETS"

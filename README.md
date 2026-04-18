@@ -1,33 +1,56 @@
 # Selenia — Command Center
 
-Panel único para ver módulos OnBox, event stream y chat con **Claude (Anthropic)** vía API local.
+Panel para módulos OnBox, event stream y chat con **Claude (Anthropic)**. Hay dos formas de correrlo:
 
-## Arranque rápido
+| Modo | Cuándo | Comando |
+|------|--------|---------|
+| **Node local** | desarrollo rápido en tu PC | `npm start` |
+| **Cloudflare Worker** | mismo origen para UI + API (recomendado prod) | `npm run cf:dev` o `npm run deploy` |
+
+## Cloudflare Worker (prod / preview)
+
+1. `npm install`
+2. Crear el worker en tu cuenta (la primera vez `npm run deploy` te guía).
+3. Secretos (no van en git):
 
 ```bash
-cd modules/selenia-dashboard   # o la ruta de este repo
-npm install
-copy .env.example .env         # Windows; en mac/linux: cp .env.example .env
+npx wrangler secret put ANTHROPIC_API_KEY
+npx wrangler secret put CORE_API_TOKEN   # opcional, si Core exige Bearer
 ```
 
-Editá `.env` y poné `ANTHROPIC_API_KEY` (clave de [Anthropic Console](https://console.anthropic.com/)).
+4. Revisá `wrangler.toml` → `CORE_V2_URL` (default apunta al Core v2 de prod; cambiá en `[env.preview.vars]` si agregás entorno preview).
+
+5. Deploy:
 
 ```bash
-npm start
+npm run deploy
 ```
 
-Abrí **http://127.0.0.1:8780/** (o el `PORT` que definas).
+6. Dev local con el mismo runtime que prod:
 
-Sin API key, el dashboard carga pero el chat responde error hasta que configures Anthropic.
+```bash
+npm run cf:dev
+```
 
-## Qué hace el servidor (`server.js`)
+Archivos: `worker/src/index.js` (API), `public/index.html` (UI), `wrangler.toml`.
 
-- Sirve `index.html`.
-- `GET /health`, `GET /events/history`, `POST /ai/chat` — lo que espera el front.
-- `POST /modules/:id/command` — hoy es **stub** local salvo que definas `SELENIA_GATEWAY_URL` apuntando a un gateway real OnBox.
+## Node local
+
+```bash
+copy .env.example .env   # Windows
+```
+
+Completá `ANTHROPIC_API_KEY` en `.env`, luego `npm start` y abrí **http://127.0.0.1:8780/**.
+
+`server.js` sirve `public/index.html` y replica los mismos endpoints que el Worker (más `SELENIA_GATEWAY_URL` si querés proxy genérico).
+
+## ¿Terminal? ¿Ejecutar comandos?
+
+- **En Cloudflare Workers no hay bash ni terminal.** No se puede `ssh` ni `npm run migrate` dentro del isolate.
+- Lo que sí podés es **“comandos” = HTTP** hacia tus workers (Core, Admin, etc.) con tokens solo en el Worker (`wrangler secret`).
+- En `worker/src/index.js` hay una **allowlist** (ej. `sistemas` → `health-check` llama `GET {CORE_V2_URL}/health`). Los demás comandos del UI devuelven “no cableado” hasta que agreguemos cada mapping con cuidado.
+- Para **scripts / migraciones / deploy**: lo sano es **GitHub Actions** (`workflow_dispatch`) o **CI**, y opcionalmente que el Worker dispare el workflow con un `GITHUB_TOKEN` guardado como secret (siguiente iteración).
 
 ## Objetivo “autonomía tipo banco”
 
-Eso es varias capas: observabilidad (métricas, alertas), ejecutores acotados (PR bots, runbooks), revisiones humanas en cambios sensibles, y claves **nunca** en el browser. Este repo da el **paso 1**: IA fuerte con Claude detrás de un servidor tuyo, sin exponer la key al cliente.
-
-Siguientes pasos razonables: Worker Cloudflare como proxy único, colas para tareas largas, webhooks de CI, y conectar comandos al core real vía `SELENIA_GATEWAY_URL`.
+Capas típicas: observabilidad, allowlist estricta, Access (Zero Trust) delante del dashboard, CI para cambios peligrosos, y cero API keys en el browser. El Worker cubre lo último para Anthropic y Core.

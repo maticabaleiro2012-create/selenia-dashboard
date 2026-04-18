@@ -167,7 +167,7 @@ const server = http.createServer(async (req, res) => {
   const pathname = url.pathname.replace(/\/$/, '') || '/';
 
   if (req.method === 'GET' && (pathname === '/' || pathname === '/index.html')) {
-    serveStatic(res, path.join(__dirname, 'index.html'), 'text/html; charset=utf-8');
+    serveStatic(res, path.join(__dirname, 'public', 'index.html'), 'text/html; charset=utf-8');
     return;
   }
 
