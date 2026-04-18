@@ -14,6 +14,11 @@ const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
 const ANTHROPIC_MODEL = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-20250514';
 const GATEWAY_URL = (process.env.SELENIA_GATEWAY_URL || '').replace(/\/$/, '');
 
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN || '';
+const GITHUB_REPO = (process.env.GITHUB_REPO || '').trim();
+const GITHUB_DISPATCH_EVENT = (process.env.GITHUB_DISPATCH_EVENT || 'selenia_approved').trim();
+const SELENIA_DISPATCH_KEY = process.env.SELENIA_DISPATCH_KEY || '';
+
 const START = Date.now();
 
 const MODULES = {
@@ -203,6 +208,46 @@ async function anthropicChatMessages(messages, councilLite) {
   return text;
 }
 
+async function tryGithubRepositoryDispatchNode(req, body, lastUserContent) {
+  if (!lastUserContent || !String(lastUserContent).includes('APROBADO_SELENIA')) return null;
+  if (!GITHUB_TOKEN || !GITHUB_REPO) {
+    pushEvent('selenia.dispatch_skip', { reason: 'github_not_configured' });
+    return { skipped: true, reason: 'Set GITHUB_REPO and GITHUB_TOKEN in .env' };
+  }
+  const provided = String(req.headers['x-selenia-dispatch-key'] || body.dispatchKey || '').trim();
+  if (SELENIA_DISPATCH_KEY) {
+    if (provided !== SELENIA_DISPATCH_KEY) {
+      pushEvent('selenia.dispatch_blocked', { reason: 'dispatch_key_mismatch' });
+      return {
+        skipped: true,
+        reason: 'Protected: header X-Selenia-Dispatch-Key or body.dispatchKey must match SELENIA_DISPATCH_KEY',
+      };
+    }
+  }
+  const eventType = GITHUB_DISPATCH_EVENT || 'selenia_approved';
+  const res = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/dispatches`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${GITHUB_TOKEN}`,
+      Accept: 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+      'Content-Type': 'application/json',
+      'User-Agent': 'Selenia-Local-Server/1.0',
+    },
+    body: JSON.stringify({
+      event_type: eventType,
+      client_payload: { source: 'selenia-server', ts: Date.now() },
+    }),
+  });
+  if (res.status === 204) {
+    pushEvent('selenia.dispatch_sent', { repo: GITHUB_REPO, event_type: eventType });
+    return { ok: true, httpStatus: 204, repo: GITHUB_REPO, event_type: eventType };
+  }
+  const detail = await res.text();
+  pushEvent('selenia.dispatch_error', { httpStatus: res.status, detail: detail.slice(0, 400) });
+  return { ok: false, httpStatus: res.status, detail: detail.slice(0, 800) };
+}
+
 async function proxyCommand(moduleId, body) {
   if (!GATEWAY_URL) {
     return {
@@ -247,7 +292,10 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === 'GET' && pathname === '/connectors/health') {
-    send(res, 200, { status: ANTHROPIC_API_KEY ? 'anthropic_configured' : 'anthropic_missing' });
+    send(res, 200, {
+      status: ANTHROPIC_API_KEY ? 'anthropic_configured' : 'anthropic_missing',
+      github_dispatch: GITHUB_TOKEN && GITHUB_REPO ? 'configured' : 'off',
+    });
     return;
   }
 
@@ -269,7 +317,8 @@ const server = http.createServer(async (req, res) => {
       pushEvent('selenia.chat.user', { chars: lastUser?.content?.length || 0, turns: messages.length, councilLite });
       const reply = await anthropicChatMessages(messages, councilLite);
       pushEvent('selenia.chat.assistant', { chars: reply.length });
-      send(res, 200, { message: reply });
+      const githubDispatch = await tryGithubRepositoryDispatchNode(req, body, lastUser?.content || '');
+      send(res, 200, { message: reply, githubDispatch });
     } catch (e) {
       pushEvent('selenia.chat.error', { message: e.message, code: e.code });
       const status = e.code === 'NO_API_KEY' ? 503 : e.status >= 400 && e.status < 600 ? e.status : 502;

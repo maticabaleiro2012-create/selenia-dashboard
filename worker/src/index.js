@@ -7,7 +7,7 @@ import { buildSystemPrompt } from './prompts.js';
  * - GET /health, /events/history, POST /modules/:id/command (allowlist only)
  *
  * No bash or terminal: Workers cannot spawn a shell. Commands are HTTP calls to your APIs.
- * For runbooks, use GitHub Actions workflow_dispatch with repo secrets.
+ * Optional: APROBADO_SELENIA in chat → POST repository_dispatch (see README).
  */
 
 const WORKER_BOOT = Date.now();
@@ -180,6 +180,58 @@ async function anthropicChatMessages(env, messages, councilLite) {
   return text;
 }
 
+/**
+ * Triggers GitHub repository_dispatch when the user message contains APROBADO_SELENIA.
+ * Secrets: GITHUB_TOKEN. Vars: GITHUB_REPO (owner/name). Optional secret SELENIA_DISPATCH_KEY → require header or body.dispatchKey.
+ */
+async function tryGithubRepositoryDispatch(request, env, body, lastUserContent) {
+  if (!lastUserContent || !String(lastUserContent).includes('APROBADO_SELENIA')) return null;
+
+  const repo = String(env.GITHUB_REPO || '').trim();
+  const token = env.GITHUB_TOKEN;
+  if (!token || !repo) {
+    pushEvent('selenia.dispatch_skip', { reason: 'github_not_configured' });
+    return { skipped: true, reason: 'Configure wrangler var GITHUB_REPO and secret GITHUB_TOKEN' };
+  }
+
+  const requiredKey = env.SELENIA_DISPATCH_KEY;
+  const provided = (request.headers.get('x-selenia-dispatch-key') || body.dispatchKey || '').trim();
+  if (requiredKey) {
+    if (provided !== requiredKey) {
+      pushEvent('selenia.dispatch_blocked', { reason: 'dispatch_key_mismatch' });
+      return {
+        skipped: true,
+        reason: 'Protected: set X-Selenia-Dispatch-Key header or JSON dispatchKey to match wrangler secret SELENIA_DISPATCH_KEY',
+      };
+    }
+  }
+
+  const eventType = String(env.GITHUB_DISPATCH_EVENT || 'selenia_approved').trim() || 'selenia_approved';
+  const res = await fetch(`https://api.github.com/repos/${repo}/dispatches`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+      'Content-Type': 'application/json',
+      'User-Agent': 'Selenia-Command-Center/1.0',
+    },
+    body: JSON.stringify({
+      event_type: eventType,
+      client_payload: { source: 'selenia-worker', ts: Date.now() },
+    }),
+  });
+
+  if (res.status === 204) {
+    pushEvent('selenia.dispatch_sent', { repo, event_type: eventType });
+    return { ok: true, httpStatus: 204, repo, event_type: eventType };
+  }
+
+  const detail = await res.text();
+  pushEvent('selenia.dispatch_error', { httpStatus: res.status, detail: detail.slice(0, 400) });
+  return { ok: false, httpStatus: res.status, detail: detail.slice(0, 800) };
+}
+
 /** Whitelisted "commands" = safe HTTP to Core (expand gradually). */
 async function runWhitelistedCommand(env, moduleId, action, payload) {
   const key = `${moduleId}:${action}`;
@@ -259,6 +311,7 @@ async function handleApi(request, env) {
         anthropic: env.ANTHROPIC_API_KEY ? 'configured' : 'missing',
         core: core.ok ? 'reachable' : 'down',
         coreStatus: core.status,
+        github_dispatch: env.GITHUB_TOKEN && String(env.GITHUB_REPO || '').trim() ? 'configured' : 'off',
       },
       200,
       corsHeaders()
@@ -282,7 +335,8 @@ async function handleApi(request, env) {
       pushEvent('selenia.chat.user', { chars: lastUser?.content?.length || 0, turns: messages.length, councilLite });
       const reply = await anthropicChatMessages(env, messages, councilLite);
       pushEvent('selenia.chat.assistant', { chars: reply.length });
-      return json({ message: reply }, 200, corsHeaders());
+      const githubDispatch = await tryGithubRepositoryDispatch(request, env, body, lastUser?.content || '');
+      return json({ message: reply, githubDispatch }, 200, corsHeaders());
     } catch (e) {
       pushEvent('selenia.chat.error', { message: e.message, code: e.code });
       const status = e.code === 'NO_API_KEY' ? 503 : e.status >= 400 && e.status < 600 ? e.status : 502;
@@ -314,7 +368,7 @@ function corsHeaders() {
   return {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Selenia-Dispatch-Key',
   };
 }
 

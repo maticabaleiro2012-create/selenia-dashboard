@@ -373,6 +373,10 @@
       <button type="button" id="newChatBtn" style="font-size:11px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text2);cursor:pointer">Nuevo chat</button>
     </div>
     <div class="chat-messages" id="chatMessages"></div>
+    <div style="padding:0 16px 8px;font-size:10px;color:var(--text2)">
+      <label for="dispatchKeyInput">Clave dispatch (opcional)</label>
+      <input type="password" id="dispatchKeyInput" autocomplete="off" placeholder="Solo si configuraste SELENIA_DISPATCH_KEY en el Worker" style="width:100%;margin-top:4px;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg3);color:var(--text);font-size:11px" />
+    </div>
     <div class="chat-input-area">
       <textarea class="chat-input" id="chatInput" rows="1" placeholder="Escribí tu mensaje..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat()}"></textarea>
       <button class="chat-send" id="chatSend" onclick="sendChat()">→</button>
@@ -747,18 +751,28 @@ async function sendChat() {
   const councilLite = document.getElementById('councilLite').checked;
 
   try {
+    const payload = { messages: chatTranscript, councilLite };
+    const dk = (document.getElementById('dispatchKeyInput') && document.getElementById('dispatchKeyInput').value || '').trim();
+    if (dk) payload.dispatchKey = dk;
     const result = await api('/ai/chat', {
       method: 'POST',
-      body: JSON.stringify({
-        messages: chatTranscript,
-        councilLite,
-      }),
+      body: JSON.stringify(payload),
     });
     const text = result.message || JSON.stringify(result);
     chatTranscript.push({ role: 'assistant', content: text });
     const el = document.getElementById(loadId);
     if (el) el.remove();
     renderChatFromTranscript();
+    if (result.githubDispatch) {
+      const box = document.getElementById('chatMessages');
+      const g = result.githubDispatch;
+      let line = '';
+      if (g.ok) line = `GitHub: disparado repository_dispatch <code>${escapeHtml(g.event_type || '')}</code> en <code>${escapeHtml(g.repo || '')}</code>.`;
+      else if (g.skipped) line = `GitHub dispatch omitido: ${escapeHtml(g.reason || '')}`;
+      else line = `GitHub dispatch error ${escapeHtml(String(g.httpStatus || ''))}: ${escapeHtml((g.detail || '').slice(0, 280))}`;
+      box.innerHTML += `<div class="chat-msg system">${line}</div>`;
+      box.scrollTop = box.scrollHeight;
+    }
   } catch (e) {
     chatTranscript.pop();
     const el = document.getElementById(loadId);

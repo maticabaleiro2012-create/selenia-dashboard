@@ -63,6 +63,18 @@ Completá `ANTHROPIC_API_KEY` en `.env`, luego `npm start` y abrí **http://127.
 
 `.github/workflows/selenia-ci.yml` — solo **workflow_dispatch**. Default `dry_run: true` valida el bundle. Para deploy desde GitHub: `dry_run: false` y secrets `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`.
 
+### Cadena APROBADO_SELENIA → deploy (repository_dispatch)
+
+1. En el repo **selenia-dashboard** ya existe `.github/workflows/selenia-repository-dispatch.yml` (escucha `repository_dispatch` con tipo `selenia_approved`).
+2. En GitHub → Settings → Developer settings → PAT (**fine-grained**): permisos sobre ese repo → **Contents: Read and write** (alcanza para `dispatches`) + **Metadata read**. O PAT classic con scope `repo`.
+3. En Cloudflare Worker (o `.env` local):
+   - `wrangler secret put GITHUB_TOKEN`
+   - Variable **`GITHUB_REPO`**: `owner/repo` (mismo repo del workflow). Podés setearla en el dashboard del worker o `wrangler versions upload` con `[vars]` en un env aparte.
+   - Opcional `wrangler secret put SELENIA_DISPATCH_KEY`: si existe, cada disparo exige la misma clave en el campo **Clave dispatch** del UI o header `X-Selenia-Dispatch-Key` (recomendado si el dashboard es público).
+4. En el chat, cuando la IA pidió confirmación, mandá **`APROBADO_SELENIA`**. Después de la respuesta de Claude, el Worker llama a `POST /repos/{GITHUB_REPO}/dispatches` y GitHub encola el job de deploy.
+
+Sin `GITHUB_TOKEN` o `GITHUB_REPO`, el chat sigue igual y `githubDispatch` en la API indica `skipped`.
+
 ## Objetivo “autonomía tipo banco”
 
 Capas típicas: observabilidad, allowlist estricta, **Cloudflare Access** delante del dashboard si exponés acciones, CI para cambios peligrosos, y cero API keys en el browser. El Worker cubre Anthropic + Core; el “24/7” real son **cron en Actions** o **Workers cron** cuando quieras pagar ese tráfico — empezá con dispatch manual para mantener costo ~0.
