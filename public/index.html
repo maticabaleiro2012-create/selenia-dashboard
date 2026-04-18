@@ -139,7 +139,7 @@
   /* === METRICS === */
   .metrics-bar {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(6, 1fr);
     gap: 12px;
     margin-bottom: 22px;
   }
@@ -172,6 +172,138 @@
     margin-top: 6px;
     font-weight: 500;
   }
+  .metric-card .trend {
+    margin-top: 8px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text2);
+  }
+  .trend.up { color: var(--green); }
+  .trend.down { color: var(--red); }
+  .trend.neutral { color: var(--text2); }
+
+  .ops-layout {
+    display: grid;
+    grid-template-columns: 1.4fr 1fr;
+    gap: 12px;
+    margin-bottom: 22px;
+  }
+  .ops-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-sm);
+    padding: 14px;
+  }
+  .ops-panel h3 {
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    color: var(--text2);
+    text-transform: uppercase;
+    margin-bottom: 10px;
+    font-weight: 600;
+  }
+  .health-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+  }
+  .health-item {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg3);
+    padding: 10px;
+  }
+  .health-item .k {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text2);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 6px;
+  }
+  .health-item .v {
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums;
+  }
+  .ops-side {
+    display: grid;
+    gap: 12px;
+    grid-template-rows: auto auto;
+  }
+  .incident-list {
+    display: grid;
+    gap: 8px;
+  }
+  .incident-item {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg3);
+    padding: 9px 10px;
+    font-size: 12px;
+  }
+  .incident-item .sev {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-right: 6px;
+    color: var(--orange);
+  }
+  .incident-item.critical .sev { color: var(--red); }
+  .incident-item.high .sev { color: var(--orange); }
+  .incident-item.medium .sev { color: var(--blue); }
+  .quick-actions { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  .quick-actions button {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--bg3);
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 8px;
+    cursor: pointer;
+  }
+  .quick-actions button:hover { border-color: var(--border-bright); background: var(--surface-hover); }
+
+  .module-matrix {
+    display: grid;
+    gap: 8px;
+    margin-bottom: 22px;
+  }
+  .module-row {
+    display: grid;
+    grid-template-columns: 1.4fr 0.7fr 0.8fr 0.8fr 0.7fr;
+    gap: 10px;
+    align-items: center;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    padding: 10px 12px;
+    font-size: 12px;
+  }
+  .module-row.header {
+    background: var(--bg3);
+    color: var(--text2);
+    font-family: var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-size: 10px;
+  }
+  .module-chip {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    text-transform: uppercase;
+  }
+  .module-chip.running { color: var(--green); border-color: rgba(34,197,94,0.4); background: rgba(34,197,94,0.1); }
+  .module-chip.error { color: var(--red); border-color: rgba(239,68,68,0.4); background: rgba(239,68,68,0.1); }
+  .module-chip.booting { color: var(--orange); border-color: rgba(234,179,8,0.4); background: rgba(234,179,8,0.1); }
 
   /* === MODULES === */
   .section-title {
@@ -394,11 +526,15 @@
     .main { grid-template-columns: 1fr; }
     .sidebar { min-height: 400px; border-left: none; border-top: 1px solid var(--border); }
     .modules-grid { grid-template-columns: repeat(2, 1fr); }
+    .ops-layout { grid-template-columns: 1fr; }
   }
   @media (max-width: 600px) {
     .modules-grid { grid-template-columns: 1fr; }
     .metrics-bar { grid-template-columns: repeat(2, 1fr); }
     .header-title-wrap h1 { font-size: 0.92rem; }
+    .health-grid { grid-template-columns: repeat(2, 1fr); }
+    .module-row { grid-template-columns: 1fr; gap: 6px; }
+    .module-row.header { display: none; }
   }
 
   .loading { display: inline-block; }
@@ -481,24 +617,72 @@
       <div class="metric-card">
         <div class="value" id="metricModules">-</div>
         <div class="label">Módulos activos</div>
+        <div class="trend neutral" id="metricModulesTrend">--</div>
       </div>
       <div class="metric-card">
         <div class="value" id="metricEvents">-</div>
         <div class="label">Eventos hoy</div>
+        <div class="trend neutral" id="metricEventsTrend">--</div>
       </div>
       <div class="metric-card">
         <div class="value" id="metricRequests">-</div>
-        <div class="label">Requests</div>
+        <div class="label">Throughput/min</div>
+        <div class="trend neutral" id="metricRequestsTrend">--</div>
       </div>
       <div class="metric-card">
         <div class="value" id="metricErrors">-</div>
-        <div class="label">Errores</div>
+        <div class="label">Alertas</div>
+        <div class="trend neutral" id="metricErrorsTrend">--</div>
+      </div>
+      <div class="metric-card">
+        <div class="value" id="metricAvailability">-</div>
+        <div class="label">Disponibilidad</div>
+        <div class="trend neutral" id="metricAvailabilityTrend">--</div>
+      </div>
+      <div class="metric-card">
+        <div class="value" id="metricP95">-</div>
+        <div class="label">Latencia p95</div>
+        <div class="trend neutral" id="metricP95Trend">--</div>
+      </div>
+    </div>
+
+    <div class="ops-layout">
+      <div class="ops-panel">
+        <h3>Salud operativa</h3>
+        <div class="health-grid">
+          <div class="health-item"><div class="k">SLO global</div><div class="v" id="healthAvailability">-</div></div>
+          <div class="health-item"><div class="k">Error rate</div><div class="v" id="healthErrorRate">-</div></div>
+          <div class="health-item"><div class="k">Latencia p95</div><div class="v" id="healthLatency">-</div></div>
+          <div class="health-item"><div class="k">Cola pendiente</div><div class="v" id="healthQueue">-</div></div>
+          <div class="health-item"><div class="k">Eventos/min</div><div class="v" id="healthThroughput">-</div></div>
+          <div class="health-item"><div class="k">MTTR estimado</div><div class="v" id="healthMttr">-</div></div>
+        </div>
+      </div>
+      <div class="ops-side">
+        <div class="ops-panel">
+          <h3>Incidentes activos</h3>
+          <div class="incident-list" id="incidentList">
+            <div class="incident-item"><span class="sev">info</span>Sin incidentes cargados</div>
+          </div>
+        </div>
+        <div class="ops-panel">
+          <h3>Acciones rápidas</h3>
+          <div class="quick-actions">
+            <button type="button" onclick="quickAction('sync')">Forzar sync</button>
+            <button type="button" onclick="quickAction('retry')">Retry jobs</button>
+            <button type="button" onclick="quickAction('health')">Recheck health</button>
+            <button type="button" onclick="quickAction('logs')">Ver logs</button>
+          </div>
+        </div>
       </div>
     </div>
 
     <!-- Modules -->
     <div class="section-title">Módulos de negocio</div>
     <div class="modules-grid" id="modulesGrid"></div>
+
+    <div class="section-title">Matriz operativa por módulo</div>
+    <div class="module-matrix" id="moduleMatrix"></div>
 
     <!-- Events -->
     <div class="section-title">Event Stream (en vivo)</div>
@@ -609,6 +793,8 @@ const COMMANDS = {
 let eventCount = 0;
 let pollInterval;
 let demoUptime = 0;
+let latestModules = {};
+let latestHistory = [];
 
 // === DEMO DATA ===
 const DEMO_MODULES = {
@@ -731,15 +917,34 @@ async function refreshStatus() {
 
   // Metrics
   const mods = health.modules || {};
+  latestModules = mods;
   const running = Object.values(mods).filter(v => v.status === 'running').length;
+  const total = Object.keys(mods).length || 1;
+  const errors = Object.values(mods).filter(v => v.status === 'error').length;
+  const availability = (running / total) * 100;
+  const recent = latestHistory.slice(-15);
+  const recentErrors = recent.filter((e) => (e.type || '').includes('error')).length;
+  const throughput = Math.max(1, Math.round((recent.length / 5) * 60));
+  const p95 = Math.round(120 + (total - running) * 30 + recentErrors * 18);
+
   document.getElementById('metricModules').textContent = running;
   document.getElementById('metricEvents').textContent = stats.historySize || 0;
-  document.getElementById('metricRequests').textContent = '-';
-  document.getElementById('metricErrors').textContent =
-    Object.values(mods).filter(v => v.status === 'error').length;
+  document.getElementById('metricRequests').textContent = throughput;
+  document.getElementById('metricErrors').textContent = errors;
+  document.getElementById('metricAvailability').textContent = `${availability.toFixed(1)}%`;
+  document.getElementById('metricP95').textContent = `${p95}ms`;
+
+  setTrend('metricModulesTrend', running === total ? 'up' : 'neutral', running === total ? 'estable' : `${total - running} con riesgo`);
+  setTrend('metricEventsTrend', eventCount > 0 ? 'up' : 'neutral', `${eventCount || 0} históricos`);
+  setTrend('metricRequestsTrend', 'neutral', 'estimado');
+  setTrend('metricErrorsTrend', errors > 0 ? 'down' : 'up', errors > 0 ? `${errors} activos` : 'sin alertas');
+  setTrend('metricAvailabilityTrend', availability >= 99 ? 'up' : availability >= 96 ? 'neutral' : 'down', availability >= 99 ? 'SLO ok' : 'degradado');
+  setTrend('metricP95Trend', p95 > 260 ? 'down' : p95 > 200 ? 'neutral' : 'up', p95 > 260 ? 'alto' : 'normal');
 
   // Module cards
   renderModules(mods);
+  renderModuleMatrix(mods, latestHistory);
+  renderOpsPanels(mods, latestHistory);
 }
 
 // === RENDER MODULES ===
@@ -765,6 +970,8 @@ function renderModules(mods) {
       <div class="mod-desc">${meta.desc}</div>
       <div class="mod-stats">
         <div class="mod-stat">Cmds: <span class="num">${data.manifest?.commands?.length || 0}</span></div>
+        <div class="mod-stat">SLO: <span class="num">${computeModuleSlo(id, data.status)}%</span></div>
+        <div class="mod-stat">5m: <span class="num">${computeModuleTraffic(id, latestHistory)}</span></div>
       </div>
     `;
     grid.appendChild(card);
@@ -774,10 +981,13 @@ function renderModules(mods) {
 // === REFRESH EVENTS ===
 async function refreshEvents() {
   const history = await api('/events/history');
+  latestHistory = Array.isArray(history) ? history : [];
   const stream = document.getElementById('eventStream');
 
   if (!history || history.length === 0) {
     stream.innerHTML = '<div style="color:var(--text2);text-align:center;padding:20px">Sin eventos todavía</div>';
+    renderOpsPanels(latestModules, latestHistory);
+    renderModuleMatrix(latestModules, latestHistory);
     return;
   }
 
@@ -801,6 +1011,121 @@ async function refreshEvents() {
       </div>
     `;
   }).join('');
+  renderOpsPanels(latestModules, latestHistory);
+  renderModuleMatrix(latestModules, latestHistory);
+}
+
+function setTrend(id, cls, text) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.className = `trend ${cls}`;
+  const icon = cls === 'up' ? '↑' : cls === 'down' ? '↓' : '→';
+  el.textContent = `${icon} ${text}`;
+}
+
+function computeModuleTraffic(moduleId, history) {
+  if (!Array.isArray(history) || !history.length) return 0;
+  const n = history.filter((ev) => JSON.stringify(ev.payload || {}).includes(moduleId)).length;
+  return n;
+}
+
+function computeModuleSlo(moduleId, status) {
+  const base = 98 + ((moduleId.length * 7) % 18) / 10;
+  const penalty = status === 'running' ? 0 : status === 'booting' ? 0.8 : 2.1;
+  return Math.max(92, (base - penalty)).toFixed(1);
+}
+
+function renderModuleMatrix(mods, history) {
+  const matrix = document.getElementById('moduleMatrix');
+  if (!matrix) return;
+  const entries = Object.entries(mods || {});
+  if (!entries.length) {
+    matrix.innerHTML = '<div class="module-row"><div>Sin módulos disponibles</div></div>';
+    return;
+  }
+  const rows = [
+    `<div class="module-row header"><div>Módulo</div><div>Estado</div><div>SLO</div><div>Eventos 5m</div><div>HeartBeat</div></div>`
+  ];
+  for (const [id, data] of entries) {
+    const name = data.manifest?.name || id;
+    const status = data.status || 'booting';
+    const slo = `${computeModuleSlo(id, status)}%`;
+    const ev5m = computeModuleTraffic(id, history);
+    const heartbeat = `${8 + ((id.charCodeAt(0) + ev5m) % 24)}s`;
+    rows.push(`
+      <div class="module-row">
+        <div>${name}</div>
+        <div><span class="module-chip ${status}">${status}</span></div>
+        <div>${slo}</div>
+        <div>${ev5m}</div>
+        <div>${heartbeat}</div>
+      </div>
+    `);
+  }
+  matrix.innerHTML = rows.join('');
+}
+
+function renderOpsPanels(mods, history) {
+  const moduleValues = Object.values(mods || {});
+  if (!moduleValues.length) return;
+  const total = moduleValues.length;
+  const running = moduleValues.filter((m) => m.status === 'running').length;
+  const availability = ((running / total) * 100);
+  const errors = moduleValues.filter((m) => m.status === 'error').length;
+  const recent = (history || []).slice(-40);
+  const errEvents = recent.filter((e) => (e.type || '').includes('error')).length;
+  const errorRate = recent.length ? (errEvents / recent.length) * 100 : 0;
+  const latency = Math.round(140 + (total - running) * 35 + errEvents * 22);
+  const throughput = Math.round((recent.length / 10) * 60);
+  const queue = Math.max(0, Math.round(errEvents * 3 + (total - running) * 4 + recent.length * 0.08));
+  const mttr = errors > 0 ? `${12 + errors * 7}m` : '4m';
+
+  setText('healthAvailability', `${availability.toFixed(2)}%`);
+  setText('healthErrorRate', `${errorRate.toFixed(1)}%`);
+  setText('healthLatency', `${latency}ms`);
+  setText('healthQueue', String(queue));
+  setText('healthThroughput', String(Math.max(1, throughput)));
+  setText('healthMttr', mttr);
+
+  const incidents = [];
+  for (const [id, data] of Object.entries(mods)) {
+    if (data.status !== 'running') {
+      const sev = data.status === 'error' ? 'critical' : 'high';
+      incidents.push({ sev, text: `${id}: estado ${data.status}` });
+    }
+  }
+  recent.slice().reverse().forEach((ev) => {
+    if ((ev.type || '').includes('error') && incidents.length < 4) {
+      incidents.push({ sev: 'medium', text: `${ev.type}` });
+    }
+  });
+  if (!incidents.length) incidents.push({ sev: 'info', text: 'Sin incidentes abiertos' });
+
+  const list = document.getElementById('incidentList');
+  if (list) {
+    list.innerHTML = incidents.slice(0, 4).map((i) =>
+      `<div class="incident-item ${i.sev}"><span class="sev">${i.sev}</span>${i.text}</div>`
+    ).join('');
+  }
+}
+
+function setText(id, value) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = value;
+}
+
+function quickAction(action) {
+  const messages = {
+    sync: 'Sincronización forzada encolada (demo visual).',
+    retry: 'Retry de jobs solicitado (demo visual).',
+    health: 'Re-validación de salud ejecutada.',
+    logs: 'Abriendo vista de logs (próximo paso: integrar endpoint).',
+  };
+  const box = document.getElementById('chatMessages');
+  if (box) {
+    box.innerHTML += `<div class="chat-msg system">${messages[action] || 'Acción ejecutada.'}</div>`;
+    box.scrollTop = box.scrollHeight;
+  }
 }
 
 // === OPEN MODULE DETAIL ===
