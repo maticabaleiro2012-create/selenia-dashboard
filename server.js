@@ -19,6 +19,10 @@ const GITHUB_REPO = (process.env.GITHUB_REPO || '').trim();
 const GITHUB_DISPATCH_EVENT = (process.env.GITHUB_DISPATCH_EVENT || 'selenia_approved').trim();
 const SELENIA_DISPATCH_KEY = process.env.SELENIA_DISPATCH_KEY || '';
 
+const CORE_V2_URL = (process.env.CORE_V2_URL || 'https://onbox-core-v2.soporte-a90.workers.dev').replace(/\/$/, '');
+const ONBOX_CORE_URL = (process.env.ONBOX_CORE_URL || 'https://onbox-core.soporte-a90.workers.dev').replace(/\/$/, '');
+const CORE_API_TOKEN = String(process.env.CORE_API_TOKEN || '').trim();
+
 const START = Date.now();
 
 const MODULES = {
@@ -75,7 +79,11 @@ function pushEvent(type, payload = {}) {
 
 pushEvent('selenia.boot', { version: '0.3.0', provider: 'anthropic' });
 Object.keys(MODULES).forEach((id) => pushEvent('module.registered', { id }));
-pushEvent('gateway.ready', { mode: GATEWAY_URL ? 'proxy' : 'local-stub', port: PORT });
+pushEvent('gateway.ready', {
+  mode: GATEWAY_URL ? 'proxy' : 'local-stub',
+  port: PORT,
+  routes: ['health', 'events', 'ops/overview', 'ai/chat', 'modules/*/command'],
+});
 
 // Sync with worker/src/prompts.js (governance + council lite)
 const SYSTEM_BASE_LOCAL = `Sos Selenia, Command Center de OnBox (logística, e-commerce, gastronomía, 6 módulos).
@@ -248,6 +256,285 @@ async function tryGithubRepositoryDispatchNode(req, body, lastUserContent) {
   return { ok: false, httpStatus: res.status, detail: detail.slice(0, 800) };
 }
 
+function authHeadersNode() {
+  const h = { Accept: 'application/json' };
+  if (CORE_API_TOKEN) h.Authorization = `Bearer ${CORE_API_TOKEN}`;
+  return h;
+}
+
+async function fetchJsonNode(url, headers, source, endpoint, pushErr) {
+  try {
+    const res = await fetch(url, { method: 'GET', headers });
+    const text = await res.text();
+    let j = null;
+    try {
+      j = text ? JSON.parse(text) : null;
+    } catch {
+      j = { raw: text.slice(0, 800) };
+    }
+    if (!res.ok) {
+      const msg = (j && (j.error || j.message)) || text || res.statusText;
+      pushErr(source, endpoint, res.status, msg);
+    }
+    return { ok: res.ok, status: res.status, json: j };
+  } catch (e) {
+    pushErr(source, endpoint, 0, e?.message || String(e));
+    return { ok: false, status: 0, json: null };
+  }
+}
+
+function buildOpsSourcesDocNode(cv2Base, legacyBase) {
+  const c = String(cv2Base || '').replace(/\/$/, '');
+  const l = String(legacyBase || '').replace(/\/$/, '');
+  if (!c) return { calls: [] };
+  return {
+    calls: [
+      { method: 'GET', url: `${c}/health`, note: 'core-v2 (público)' },
+      { method: 'GET', url: `${l}/health`, note: 'onbox-core README (público)' },
+      {
+        method: 'GET',
+        url: `${c}/inventory/summary?location=onbox&byLocation=true&limit=2000`,
+        note: 'docs/fulfillment-api.md — Bearer si CORE_API_TOKEN',
+      },
+      {
+        method: 'GET',
+        url: `${c}/inventory/summary?location=fulfillment&byLocation=true&limit=2000`,
+        note: 'docs/fulfillment-api.md — Bearer si CORE_API_TOKEN',
+      },
+      { method: 'GET', url: `${c}/orders/monitor?all=1`, note: 'core-v2 README — Bearer opcional' },
+      { method: 'GET', url: `${c}/clients/auth-audit`, note: 'core-v2 — requiere CORE_API_TOKEN' },
+      { method: 'GET', url: `${c}/deposits`, note: 'core-v2 README' },
+    ],
+  };
+}
+
+async function buildHealthForNode() {
+  const uptime = Math.floor((Date.now() - START) / 1000);
+  let coreOk = false;
+  try {
+    const r = await fetch(`${CORE_V2_URL}/health`);
+    const j = await r.json().catch(() => ({}));
+    coreOk = r.ok && j && j.ok !== false;
+  } catch (_) {
+    coreOk = false;
+  }
+  const modules = {};
+  for (const [id, def] of Object.entries(MODULES)) {
+    const st = !CORE_V2_URL ? 'booting' : coreOk ? 'running' : id === 'sistemas' ? 'error' : 'booting';
+    modules[id] = { ...def, status: st };
+  }
+  return { uptime, modules };
+}
+
+/** Misma agregación que `worker/src/index.js` → `GET /ops/overview` (solo rutas documentadas). */
+async function buildOpsOverviewForNode() {
+  const errors = [];
+  const pushErr = (source, endpoint, status, message) => {
+    errors.push({
+      source,
+      endpoint,
+      status: status || 0,
+      message: String(message || '').slice(0, 500),
+    });
+  };
+
+  const health = await buildHealthForNode();
+  const cv2Base = CORE_V2_URL;
+  const legacyBase = ONBOX_CORE_URL;
+  const token = CORE_API_TOKEN;
+  const authH = authHeadersNode();
+  const now = Date.now();
+  const tokenPresent = !!token;
+
+  if (!cv2Base) {
+    pushErr('selenia-local', 'env.CORE_V2_URL', 0, 'CORE_V2_URL not configured');
+    return {
+      generatedAt: now,
+      errors,
+      contract: 'core-v2 README + docs/fulfillment-api.md + onbox-core README',
+      meta: { coreApiTokenConfigured: tokenPresent },
+      sources: buildOpsSourcesDocNode(cv2Base, legacyBase),
+      summary: {
+        availability: null,
+        errorRate: null,
+        latencyP95: null,
+        queueDepth: null,
+        throughputPerMin: null,
+        ordersMonitorCount: null,
+        mttrMin: null,
+        activeAlerts: 0,
+        inventory: { onbox: null, fulfillment: null },
+        depositsCount: null,
+      },
+      services: [],
+      modules: Object.entries(health.modules || {}).map(([id, data]) => ({
+        id,
+        name: data.manifest?.name || id,
+        status: data.status,
+        slo: null,
+        latencyP95: null,
+        event5m: null,
+        errors5m: null,
+        queueDepth: null,
+        heartbeatSec: null,
+      })),
+      incidents: [],
+    };
+  }
+
+  if (!token) {
+    pushErr('selenia-local', '/ops/overview', 0, 'CORE_API_TOKEN not set: omitiendo /clients/auth-audit (requiere Bearer en core-v2)');
+  }
+
+  const authAuditPromise = token
+    ? fetchJsonNode(`${cv2Base}/clients/auth-audit`, authH, 'core-v2', '/clients/auth-audit', pushErr)
+    : Promise.resolve({ ok: false, status: 0, json: null });
+
+  const [cv2Health, legacyHealth, invOnbox, invFulfillment, ordersMon, authAudit, deposits] = await Promise.all([
+    fetchJsonNode(`${cv2Base}/health`, {}, 'core-v2', '/health', pushErr),
+    fetchJsonNode(`${legacyBase}/health`, {}, 'onbox-core', '/health', pushErr),
+    fetchJsonNode(
+      `${cv2Base}/inventory/summary?location=onbox&byLocation=true&limit=2000`,
+      authH,
+      'core-v2',
+      '/inventory/summary?location=onbox',
+      pushErr
+    ),
+    fetchJsonNode(
+      `${cv2Base}/inventory/summary?location=fulfillment&byLocation=true&limit=2000`,
+      authH,
+      'core-v2',
+      '/inventory/summary?location=fulfillment',
+      pushErr
+    ),
+    fetchJsonNode(`${cv2Base}/orders/monitor?all=1`, authH, 'core-v2', '/orders/monitor?all=1', pushErr),
+    authAuditPromise,
+    fetchJsonNode(`${cv2Base}/deposits`, authH, 'core-v2', '/deposits', pushErr),
+  ]);
+
+  const sumQty = (items) =>
+    (Array.isArray(items) ? items : []).reduce((a, r) => a + (Number(r?.total_available) || 0), 0);
+  const skuRows = (items) => (Array.isArray(items) ? items.length : 0);
+
+  const itemsOnbox = invOnbox.ok && invOnbox.json && Array.isArray(invOnbox.json.items) ? invOnbox.json.items : [];
+  const itemsFulfillment =
+    invFulfillment.ok && invFulfillment.json && Array.isArray(invFulfillment.json.items) ? invFulfillment.json.items : [];
+
+  const ordersArr =
+    ordersMon.ok && ordersMon.json && Array.isArray(ordersMon.json.data?.orders)
+      ? ordersMon.json.data.orders
+      : ordersMon.ok && ordersMon.json && Array.isArray(ordersMon.json.orders)
+        ? ordersMon.json.orders
+        : [];
+  const ordersMonitorCount = ordersArr.length;
+
+  const cv2Ok = !!(cv2Health.ok && cv2Health.json && cv2Health.json.ok !== false);
+  const legacyOk = !!(legacyHealth.ok && legacyHealth.json && legacyHealth.json.ok !== false);
+  const availability = cv2Ok && legacyOk ? 100 : cv2Ok || legacyOk ? 85 : 0;
+
+  const withoutPw =
+    token && authAudit.ok && authAudit.json && authAudit.json.ok !== false
+      ? Number(authAudit.json.without_password_hash || 0)
+      : null;
+  const totalClients =
+    token && authAudit.ok && authAudit.json && authAudit.json.ok !== false ? Number(authAudit.json.total || 0) : null;
+
+  const errorRate =
+    totalClients != null && totalClients > 0 && withoutPw != null
+      ? Number(((withoutPw / totalClients) * 100).toFixed(2))
+      : null;
+
+  const depositsList =
+    deposits.ok && deposits.json && Array.isArray(deposits.json.deposits) ? deposits.json.deposits : [];
+  const depositsCount = deposits.ok ? depositsList.length : null;
+
+  const incidents = [];
+  if (!cv2Ok) {
+    incidents.push({
+      id: 'core-v2-health',
+      title: 'Core v2: /health no OK',
+      severity: 'high',
+      status: 'open',
+      owner: 'platform',
+      openedAt: now,
+    });
+  }
+  if (!legacyOk) {
+    incidents.push({
+      id: 'onbox-core-health',
+      title: 'Onbox Core (legacy): /health no OK',
+      severity: 'high',
+      status: 'open',
+      owner: 'platform',
+      openedAt: now,
+    });
+  }
+  if (withoutPw != null && withoutPw > 0) {
+    incidents.push({
+      id: 'clients-without-password',
+      title: `${withoutPw} clientes sin password_hash (Neon)`,
+      severity: withoutPw > 5 ? 'high' : 'medium',
+      status: 'open',
+      owner: 'security',
+      openedAt: now,
+    });
+  }
+
+  const services = [
+    {
+      id: 'core-v2',
+      name: 'Core v2 (Neon)',
+      status: cv2Ok ? 'running' : 'error',
+      neon: !!(cv2Health.json && cv2Health.json.neon),
+      endpoint: '/health',
+    },
+    {
+      id: 'onbox-core',
+      name: 'Onbox Core (legacy)',
+      status: legacyOk ? 'running' : 'error',
+      endpoint: '/health',
+    },
+  ];
+
+  const modules = Object.entries(health.modules || {}).map(([id, data]) => ({
+    id,
+    name: data.manifest?.name || id,
+    status: data.status,
+    slo: null,
+    latencyP95: null,
+    event5m: null,
+    errors5m: null,
+    queueDepth: null,
+    heartbeatSec: null,
+  }));
+
+  return {
+    generatedAt: now,
+    errors,
+    contract: 'core-v2 README + docs/fulfillment-api.md + onbox-core README',
+    meta: { coreApiTokenConfigured: tokenPresent },
+    sources: buildOpsSourcesDocNode(cv2Base, legacyBase),
+    summary: {
+      availability,
+      errorRate,
+      latencyP95: null,
+      queueDepth: null,
+      throughputPerMin: null,
+      ordersMonitorCount,
+      mttrMin: null,
+      activeAlerts: incidents.length,
+      inventory: {
+        onbox: { skuRows: skuRows(itemsOnbox), totalUnits: sumQty(itemsOnbox) },
+        fulfillment: { skuRows: skuRows(itemsFulfillment), totalUnits: sumQty(itemsFulfillment) },
+      },
+      depositsCount,
+    },
+    services,
+    modules,
+    incidents,
+  };
+}
+
 async function proxyCommand(moduleId, body) {
   if (!GATEWAY_URL) {
     return {
@@ -277,7 +564,22 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === 'GET' && pathname === '/health') {
-    send(res, 200, { uptime: Math.floor((Date.now() - START) / 1000), modules: MODULES });
+    try {
+      const h = await buildHealthForNode();
+      send(res, 200, h);
+    } catch (_) {
+      send(res, 200, { uptime: Math.floor((Date.now() - START) / 1000), modules: MODULES });
+    }
+    return;
+  }
+
+  if (req.method === 'GET' && pathname === '/ops/overview') {
+    try {
+      const body = await buildOpsOverviewForNode();
+      send(res, 200, body);
+    } catch (e) {
+      send(res, 502, { error: e.message || String(e) });
+    }
     return;
   }
 
@@ -352,4 +654,7 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, () => {
   console.log(`Selenia dashboard → http://127.0.0.1:${PORT}/`);
   console.log(`Anthropic: ${ANTHROPIC_API_KEY ? `model=${ANTHROPIC_MODEL}` : 'ANTHROPIC_API_KEY missing (solo health/events; chat fallará)'}`);
+  console.log(
+    `Core: CORE_V2_URL=${CORE_V2_URL} ONBOX_CORE_URL=${ONBOX_CORE_URL} CORE_API_TOKEN=${CORE_API_TOKEN ? 'set' : 'missing'}`
+  );
 });

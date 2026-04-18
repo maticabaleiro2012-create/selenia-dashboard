@@ -281,6 +281,46 @@
   }
   .ops-errors:empty { display: none; }
 
+  .config-banner {
+    margin: 0 24px 14px;
+    padding: 10px 14px;
+    border-radius: var(--radius-sm);
+    border: 1px solid rgba(234, 179, 8, 0.45);
+    background: rgba(234, 179, 8, 0.1);
+    color: var(--text);
+    font-size: 13px;
+    line-height: 1.45;
+  }
+  .config-banner code {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    background: var(--surface);
+    padding: 2px 6px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+  }
+
+  .ops-sources {
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+    font-size: 11px;
+    color: var(--text2);
+  }
+  .ops-src-title {
+    font-weight: 600;
+    color: var(--text2);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 6px;
+    font-size: 10px;
+  }
+  .ops-src-line { margin-bottom: 4px; line-height: 1.35; }
+  .ops-src-line a { color: var(--accent2); text-decoration: none; word-break: break-all; }
+  .ops-src-line a:hover { text-decoration: underline; }
+  .ops-src-note { color: var(--hud-dim); font-family: var(--font-mono); font-size: 10px; }
+  .ops-src-muted { color: var(--text2); font-size: 11px; }
+
   .module-matrix {
     display: grid;
     gap: 8px;
@@ -548,6 +588,7 @@
     .health-grid { grid-template-columns: repeat(2, 1fr); }
     .module-row { grid-template-columns: 1fr; gap: 6px; }
     .module-row.header { display: none; }
+    .config-banner { margin: 0 14px 12px; font-size: 12px; }
   }
 
   .loading { display: inline-block; }
@@ -621,6 +662,8 @@
   </div>
 </header>
 
+<div id="configBanner" class="config-banner" hidden></div>
+
 <!-- MAIN -->
 <div class="main">
   <!-- LEFT: CONTENT -->
@@ -670,6 +713,7 @@
           <div class="health-item"><div class="k">Pedidos (monitor)</div><div class="v" id="healthThroughput">-</div></div>
           <div class="health-item"><div class="k">MTTR estimado</div><div class="v" id="healthMttr">-</div></div>
         </div>
+        <div class="ops-sources" id="opsSources"></div>
         <div class="ops-errors" id="opsErrors" hidden></div>
       </div>
       <div class="ops-side">
@@ -813,6 +857,39 @@ let opsOverview = null;
 
 function isStrictOpsOverview(ov) {
   return !!(ov && ov.contract && ov.contract !== 'demo');
+}
+
+function updateConfigBanner(ov) {
+  const el = document.getElementById('configBanner');
+  if (!el) return;
+  const strict = isStrictOpsOverview(ov);
+  const noToken = strict && ov && ov.meta && ov.meta.coreApiTokenConfigured === false;
+  if (noToken) {
+    el.hidden = false;
+    el.innerHTML =
+      'Falta el secret <code>CORE_API_TOKEN</code> en Cloudflare (Worker <strong>selenia-command-center</strong>) o en <code>.env</code> local. Sin él no corre <code>GET /clients/auth-audit</code> y el error rate de clientes sin password queda en <strong>—</strong>. ' +
+      'Desde la carpeta del dashboard: <code>npx wrangler secret put CORE_API_TOKEN</code> (mismo valor que usan portal/admin hacia Core).';
+  } else {
+    el.hidden = true;
+    el.innerHTML = '';
+  }
+}
+
+function renderOpsSources(ov) {
+  const el = document.getElementById('opsSources');
+  if (!el) return;
+  const calls = ov && ov.sources && Array.isArray(ov.sources.calls) ? ov.sources.calls : [];
+  if (!calls.length) {
+    el.innerHTML = '<span class="ops-src-muted">Fuentes: esperando respuesta de <code>/ops/overview</code></span>';
+    return;
+  }
+  const lines = calls.map((c) => {
+    const u = escapeHtml(c.url || '');
+    const m = escapeHtml(c.method || 'GET');
+    const note = c.note ? ` <span class="ops-src-note">${escapeHtml(c.note)}</span>` : '';
+    return `<div class="ops-src-line"><a href="${u}" target="_blank" rel="noopener noreferrer">${m} ${u}</a>${note}</div>`;
+  });
+  el.innerHTML = `<div class="ops-src-title">Fuentes (documentadas)</div>${lines.join('')}`;
 }
 
 // === DEMO DATA ===
@@ -997,6 +1074,8 @@ async function refreshStatus() {
   renderModules(mods);
   renderModuleMatrix(mods, latestHistory, opsOverview);
   renderOpsPanels(mods, latestHistory, opsOverview);
+  updateConfigBanner(opsOverview);
+  renderOpsSources(opsOverview);
 }
 
 // === RENDER MODULES ===
@@ -1255,10 +1334,24 @@ function buildDemoOpsOverview() {
     queueDepth: 0,
     heartbeatSec: 10 + (id.length % 9),
   }));
+  const cv2 = 'https://onbox-core-v2.soporte-a90.workers.dev';
+  const leg = 'https://onbox-core.soporte-a90.workers.dev';
   return {
     generatedAt: Date.now(),
     contract: 'demo',
     errors: [],
+    meta: { coreApiTokenConfigured: true },
+    sources: {
+      calls: [
+        { method: 'GET', url: `${cv2}/health`, note: 'demo' },
+        { method: 'GET', url: `${leg}/health`, note: 'demo' },
+        { method: 'GET', url: `${cv2}/inventory/summary?location=onbox&byLocation=true&limit=2000`, note: 'demo' },
+        { method: 'GET', url: `${cv2}/inventory/summary?location=fulfillment&byLocation=true&limit=2000`, note: 'demo' },
+        { method: 'GET', url: `${cv2}/orders/monitor?all=1`, note: 'demo' },
+        { method: 'GET', url: `${cv2}/clients/auth-audit`, note: 'demo' },
+        { method: 'GET', url: `${cv2}/deposits`, note: 'demo' },
+      ],
+    },
     summary: {
       availability: 99.82,
       errorRate: 0.12,

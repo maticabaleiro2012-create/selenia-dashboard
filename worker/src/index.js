@@ -140,6 +140,32 @@ function coreAuthHeaders(env) {
   return h;
 }
 
+/** URLs que consume `/ops/overview` (para el UI: enlaces a las mismas rutas que documentación). */
+function buildOpsSourcesDoc(cv2Base, legacyBase) {
+  const c = String(cv2Base || '').replace(/\/$/, '');
+  const l = String(legacyBase || '').replace(/\/$/, '');
+  if (!c) return { calls: [] };
+  return {
+    calls: [
+      { method: 'GET', url: `${c}/health`, note: 'core-v2 (público)' },
+      { method: 'GET', url: `${l}/health`, note: 'onbox-core README (público)' },
+      {
+        method: 'GET',
+        url: `${c}/inventory/summary?location=onbox&byLocation=true&limit=2000`,
+        note: 'docs/fulfillment-api.md — Bearer si CORE_API_TOKEN',
+      },
+      {
+        method: 'GET',
+        url: `${c}/inventory/summary?location=fulfillment&byLocation=true&limit=2000`,
+        note: 'docs/fulfillment-api.md — Bearer si CORE_API_TOKEN',
+      },
+      { method: 'GET', url: `${c}/orders/monitor?all=1`, note: 'core-v2 README — Bearer opcional' },
+      { method: 'GET', url: `${c}/clients/auth-audit`, note: 'core-v2 — requiere CORE_API_TOKEN' },
+      { method: 'GET', url: `${c}/deposits`, note: 'core-v2 README' },
+    ],
+  };
+}
+
 async function buildHealth(env) {
   const uptime = Math.floor((Date.now() - WORKER_BOOT) / 1000);
   const core = await upstreamCore(env, '/health');
@@ -182,10 +208,13 @@ async function buildOpsOverview(env) {
   }
 
   const now = Date.now();
+  const tokenPresent = !!token;
   const empty = {
     generatedAt: now,
     errors,
     contract: 'core-v2 README + docs/fulfillment-api.md + onbox-core README',
+    meta: { coreApiTokenConfigured: tokenPresent },
+    sources: buildOpsSourcesDoc(cv2Base, legacyBase),
     summary: {
       availability: null,
       errorRate: null,
@@ -361,6 +390,8 @@ async function buildOpsOverview(env) {
     generatedAt: now,
     errors,
     contract: 'core-v2 README + docs/fulfillment-api.md + onbox-core README',
+    meta: { coreApiTokenConfigured: tokenPresent },
+    sources: buildOpsSourcesDoc(cv2Base, legacyBase),
     summary: {
       availability,
       errorRate,
