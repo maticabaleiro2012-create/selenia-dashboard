@@ -72,11 +72,69 @@ pushEvent('selenia.boot', { version: '0.3.0', provider: 'anthropic' });
 Object.keys(MODULES).forEach((id) => pushEvent('module.registered', { id }));
 pushEvent('gateway.ready', { mode: GATEWAY_URL ? 'proxy' : 'local-stub', port: PORT });
 
-const SYSTEM_PROMPT = `Sos Selenia, el asistente del Command Center de OnBox (logística, e-commerce, gastronomía).
-Tenés visión operativa de 6 módulos: gastronomía, logística, onbox-market (marketplace ML/Shopify/TiendaNube), retail/inventario FIFO, sistemas/workers, financiera/AFIP.
-Respondé en español rioplatense cuando el usuario escribe así. Sé concreta: pasos, riesgos, y qué medir.
-No inventés datos numéricos de pedidos/stock: si no tenés API en vivo, decilo y proponé qué endpoint o pantalla verificar.
-No ejecutes código ni shell: solo guiá.`;
+// Sync with worker/src/prompts.js (governance + council lite)
+const SYSTEM_BASE_LOCAL = `Sos Selenia, Command Center de OnBox (logística, e-commerce, gastronomía, 6 módulos).
+Runtime: Node local (dev). En prod el mismo rol corre en Cloudflare Worker. No shell en el Worker; deploy vía CI.
+Español rioplatense si el usuario escribe así. No inventés números de stock o pedidos sin datos de API.`;
+
+const GOVERNANCE_FULL_LOCAL = `
+## Gobernanza (obligatorio)
+
+1. **Clasificá** mentalmente el pedido: SOLO_LECTURA | PROPONE_CAMBIOS | DEPLOY_INFRA | DATOS_SENSIBLES.
+2. Si es PROPONE_CAMBIOS, DEPLOY_INFRA o DATOS_SENSIBLES: **no asumas que ya se ejecutó nada**. Proponé plan, riesgos, y rollback. Pedí aclaraciones si falta contexto.
+3. **Aprobación explícita del humano** antes de dar por hecho cualquier paso irreversible (deploy prod, migraciones, borrados, rotación de secrets, escritura masiva). Hasta que el usuario no envíe exactamente la frase **APROBADO_SELENIA** (sola o en una línea), solo planificá y advertí; no simules que corriste el paso.
+4. Si el usuario ya envió **APROBADO_SELENIA** en el historial reciente y el pedido sigue siendo el mismo: podés detallar pasos concretos siguientes (comandos sugeridos para CI, checks, orden), pero **seguí sin afirmar que el Worker ejecutó deploy** (no puede).
+5. Preferí preguntas concretas (una o dos) antes de ramificar en muchas opciones.
+
+## Council compacto (una sola respuesta, formato fijo)
+
+Incluí siempre estas subsecciones con texto breve (máx. ~120 palabras en total en todo el bloque Council+Recomendación):
+
+### Contrarian
+Qué puede salir mal, qué falta, supuesto peligroso.
+
+### Ejecutor
+Primer paso concreto "el lunes" (o el próximo paso verificable).
+
+### Ojo fresco
+Qué puede no entender alguien afuera del equipo (jerga, ambigüedad).
+
+### Recomendación
+Qué harías vos y por qué, en 3-5 oraciones.
+
+Si el pedido es trivialmente SOLO_LECTURA (definición, explicación de concepto sin acción), igual podés acortar el Council a 2-3 oraciones totales.
+`;
+
+const GOVERNANCE_MINIMAL_LOCAL = `
+## Gobernanza (obligatorio)
+Misma regla de **APROBADO_SELENIA** para pasos irreversibles. No shell en Worker. Deploy vía CI.
+Respondé en formato breve: riesgo principal, recomendación, una pregunta si hace falta.
+`;
+
+function buildSystemPromptLocal(councilLite) {
+  return SYSTEM_BASE_LOCAL + (councilLite ? '\n' + GOVERNANCE_FULL_LOCAL : '\n' + GOVERNANCE_MINIMAL_LOCAL);
+}
+
+const MAX_CHAT_MESSAGES = 24;
+
+function normalizeAnthropicMessages(raw) {
+  const list = Array.isArray(raw) ? raw : [];
+  const out = [];
+  for (const m of list) {
+    const role = m.role === 'assistant' ? 'assistant' : 'user';
+    const content = String(m.content || '').trim();
+    if (!content) continue;
+    out.push({ role, content });
+  }
+  const merged = [];
+  for (const m of out) {
+    const last = merged[merged.length - 1];
+    if (last && last.role === m.role) last.content += '\n\n' + m.content;
+    else merged.push({ ...m });
+  }
+  while (merged.length && merged[0].role !== 'user') merged.shift();
+  return merged.slice(-MAX_CHAT_MESSAGES);
+}
 
 async function readBody(req) {
   const chunks = [];
@@ -107,12 +165,14 @@ function serveStatic(res, filePath, contentType) {
   });
 }
 
-async function anthropicChat(userMessage) {
+async function anthropicChatMessages(messages, councilLite) {
   if (!ANTHROPIC_API_KEY) {
     const err = new Error('Falta ANTHROPIC_API_KEY en .env');
     err.code = 'NO_API_KEY';
     throw err;
   }
+
+  const system = buildSystemPromptLocal(councilLite !== false);
 
   const resp = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -124,8 +184,8 @@ async function anthropicChat(userMessage) {
     body: JSON.stringify({
       model: ANTHROPIC_MODEL,
       max_tokens: 4096,
-      system: SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: userMessage }],
+      system,
+      messages,
     }),
   });
 
@@ -194,13 +254,20 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && pathname === '/ai/chat') {
     try {
       const body = await readBody(req);
-      const message = typeof body.message === 'string' ? body.message : '';
-      if (!message.trim()) {
-        send(res, 400, { error: 'message required' });
+      const single = typeof body.message === 'string' ? body.message.trim() : '';
+      let messages = normalizeAnthropicMessages(body.messages);
+      if (single) messages = normalizeAnthropicMessages([...messages, { role: 'user', content: single }]);
+      if (!messages.length) {
+        send(res, 400, { error: 'message or messages[] required' });
         return;
       }
-      pushEvent('selenia.chat.user', { chars: message.length });
-      const reply = await anthropicChat(message.trim());
+      const lastUser = [...messages].reverse().find((m) => m.role === 'user');
+      if (lastUser && lastUser.content.includes('APROBADO_SELENIA')) {
+        pushEvent('selenia.human_approval', { token: 'APROBADO_SELENIA' });
+      }
+      const councilLite = body.councilLite !== false;
+      pushEvent('selenia.chat.user', { chars: lastUser?.content?.length || 0, turns: messages.length, councilLite });
+      const reply = await anthropicChatMessages(messages, councilLite);
       pushEvent('selenia.chat.assistant', { chars: reply.length });
       send(res, 200, { message: reply });
     } catch (e) {

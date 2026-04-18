@@ -1,0 +1,33 @@
+# Costo: $0 mientras no lo ejecutes. Sin cron = sin minutos quemados.
+# Secrets opcionales hasta deploy real: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID
+name: Selenia CI
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'true = solo wrangler deploy --dry-run'
+        type: boolean
+        default: true
+
+jobs:
+  wrangler:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - name: Wrangler
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            npx wrangler deploy --dry-run
+          else
+            npx wrangler deploy
+          fi

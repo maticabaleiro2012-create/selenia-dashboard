@@ -1,3 +1,5 @@
+import { buildSystemPrompt } from './prompts.js';
+
 /**
  * Selenia on Cloudflare Workers:
  * - Serves static UI from [assets] public/
@@ -66,7 +68,7 @@ function pushEvent(type, payload = {}) {
 function ensureBootLogged() {
   if (bootLogged) return;
   bootLogged = true;
-  pushEvent('selenia.boot', { version: '0.4.0-cf', provider: 'anthropic', runtime: 'cloudflare-worker' });
+  pushEvent('selenia.boot', { version: '0.5.0-cf', provider: 'anthropic', runtime: 'cloudflare-worker' });
   Object.keys(MODULES_BASE).forEach((id) => pushEvent('module.registered', { id }));
   pushEvent('gateway.ready', { mode: 'worker', routes: ['health', 'events', 'ai/chat', 'modules/*/command'] });
 }
@@ -121,12 +123,28 @@ async function buildHealth(env) {
   return { uptime, modules };
 }
 
-const SYSTEM_PROMPT = `Sos Selenia, el asistente del Command Center de OnBox (logística, e-commerce, gastronomía).
-Corré en Cloudflare Workers: no tenés shell ni acceso a bash; los "comandos" son llamadas HTTP a APIs internas (Core, Admin, etc.).
-Explicá eso si el usuario pide terminal o SSH. En español rioplatense si el usuario escribe así.
-No inventés datos de pedidos/stock sin API.`;
+const MAX_CHAT_MESSAGES = 24;
 
-async function anthropicChat(env, userMessage) {
+function normalizeAnthropicMessages(raw) {
+  const list = Array.isArray(raw) ? raw : [];
+  const out = [];
+  for (const m of list) {
+    const role = m.role === 'assistant' ? 'assistant' : 'user';
+    const content = String(m.content || '').trim();
+    if (!content) continue;
+    out.push({ role, content });
+  }
+  const merged = [];
+  for (const m of out) {
+    const last = merged[merged.length - 1];
+    if (last && last.role === m.role) last.content += '\n\n' + m.content;
+    else merged.push({ ...m });
+  }
+  while (merged.length && merged[0].role !== 'user') merged.shift();
+  return merged.slice(-MAX_CHAT_MESSAGES);
+}
+
+async function anthropicChatMessages(env, messages, councilLite) {
   const key = env.ANTHROPIC_API_KEY;
   if (!key) {
     const e = new Error('ANTHROPIC_API_KEY not configured (wrangler secret put ANTHROPIC_API_KEY)');
@@ -134,6 +152,7 @@ async function anthropicChat(env, userMessage) {
     throw e;
   }
   const model = env.ANTHROPIC_MODEL || 'claude-sonnet-4-20250514';
+  const system = buildSystemPrompt(councilLite !== false);
   const resp = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -144,8 +163,8 @@ async function anthropicChat(env, userMessage) {
     body: JSON.stringify({
       model,
       max_tokens: 4096,
-      system: SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: userMessage }],
+      system,
+      messages,
     }),
   });
   const data = await resp.json().catch(() => ({}));
@@ -249,10 +268,19 @@ async function handleApi(request, env) {
   if (method === 'POST' && pathname === '/ai/chat') {
     try {
       const body = await readJson(request);
-      const message = typeof body.message === 'string' ? body.message : '';
-      if (!message.trim()) return json({ error: 'message required' }, 400, corsHeaders());
-      pushEvent('selenia.chat.user', { chars: message.length });
-      const reply = await anthropicChat(env, message.trim());
+      const single = typeof body.message === 'string' ? body.message.trim() : '';
+      let messages = normalizeAnthropicMessages(body.messages);
+      if (single) messages = normalizeAnthropicMessages([...messages, { role: 'user', content: single }]);
+      if (!messages.length) return json({ error: 'message or messages[] required' }, 400, corsHeaders());
+
+      const lastUser = [...messages].reverse().find((m) => m.role === 'user');
+      if (lastUser && lastUser.content.includes('APROBADO_SELENIA')) {
+        pushEvent('selenia.human_approval', { token: 'APROBADO_SELENIA' });
+      }
+
+      const councilLite = body.councilLite !== false;
+      pushEvent('selenia.chat.user', { chars: lastUser?.content?.length || 0, turns: messages.length, councilLite });
+      const reply = await anthropicChatMessages(env, messages, councilLite);
       pushEvent('selenia.chat.assistant', { chars: reply.length });
       return json({ message: reply }, 200, corsHeaders());
     } catch (e) {
