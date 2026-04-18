@@ -1,0 +1,16 @@
+{
+  "name": "selenia-dashboard",
+  "version": "0.3.0",
+  "private": true,
+  "description": "Selenia Command Center — static UI + local API (Claude / Anthropic)",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7"
+  }
+}

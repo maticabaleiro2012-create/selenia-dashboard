@@ -364,7 +364,7 @@
   <div class="sidebar">
     <div class="chat-header">
       <div class="logo" style="width:24px;height:24px;font-size:12px;border-radius:6px">S</div>
-      Selenia IA
+      Selenia IA · Claude
     </div>
     <div class="chat-messages" id="chatMessages">
       <div class="chat-msg system">Selenia está lista. Preguntame lo que quieras sobre el sistema.</div>
@@ -503,8 +503,13 @@ async function api(path, opts = {}) {
     headers: { 'Content-Type': 'application/json' },
     ...opts,
   });
-  if (!res.ok) throw new Error(`API ${res.status}`);
-  return res.json();
+  const ct = res.headers.get('content-type') || '';
+  const data = ct.includes('application/json') ? await res.json() : await res.text();
+  if (!res.ok) {
+    const detail = typeof data === 'object' && data && data.error ? data.error : `HTTP ${res.status}`;
+    throw new Error(detail);
+  }
+  return data;
 }
 
 // === INIT ===
@@ -718,7 +723,7 @@ async function sendChat() {
   } catch (e) {
     const el = document.getElementById(loadId);
     if (el) {
-      el.innerHTML = `<div class="sender">Selenia</div><span style="color:var(--red)">Error: ${e.message}. Asegurate de configurar OPENAI_API_KEY en .env</span>`;
+      el.innerHTML = `<div class="sender">Selenia</div><span style="color:var(--red)">Error: ${escapeHtml(e.message)}. Corré \`npm start\` en selenia-dashboard y configurá ANTHROPIC_API_KEY en .env (ver .env.example).</span>`;
     }
   }
 
