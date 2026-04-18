@@ -7,10 +7,16 @@
 name = "selenia-command-center"
 main = "worker/src/index.js"
 compatibility_date = "2024-11-01"
+# Worker→Worker en *.workers.dev: sin este flag, subrequests pueden fallar (CF error 1042 / 404).
+compatibility_flags = ["global_fetch_strictly_public"]
 
 [vars]
 CORE_V2_URL = "https://onbox-core-v2.soporte-a90.workers.dev"
 ONBOX_CORE_URL = "https://onbox-core.soporte-a90.workers.dev"
+# Gastronomía — solo lectura en /ops/overview (GET /health y GET /api/health)
+GASTRONOMIA_PROXY_URL = "https://logistica-gastronomica-proxy.soporte-a90.workers.dev"
+# Opcional: JSON array de probes extra para GET /ops/audit, ej. [{"id":"pages","label":"Gastro Pages","url":"https://..."}]
+# SELENIA_AUDIT_EXTRA = "[]"
 ANTHROPIC_MODEL = "claude-sonnet-4-20250514"
 # Opcional: al escribir APROBADO_SELENIA en el chat → repository_dispatch en GitHub
 GITHUB_REPO = "maticabaleiro2012-create/selenia-dashboard"
@@ -21,6 +27,10 @@ GITHUB_DISPATCH_EVENT = "selenia_approved"
 #   wrangler secret put CORE_API_TOKEN
 #   wrangler secret put GITHUB_TOKEN          # PAT fine-grained: Contents + Metadata, o classic repo scope
 #   wrangler secret put SELENIA_DISPATCH_KEY    # si existe, hace falta header X-Selenia-Dispatch-Key o body.dispatchKey
+
+[[kv_namespaces]]
+binding = "SELENIA_KV"
+id = "12a388ace84e452698b0a53f6f7258e7"
 
 [assets]
 directory = "public"

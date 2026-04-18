@@ -1,10 +1,12 @@
 import { buildSystemPrompt } from './prompts.js';
+import { buildOpsAudit } from './audit.js';
 
 /**
  * Selenia on Cloudflare Workers:
  * - Serves static UI from [assets] public/
  * - POST /ai/chat → Anthropic (secret ANTHROPIC_API_KEY)
  * - GET /health, /events/history, GET /ops/overview, POST /modules/:id/command (allowlist only)
+ * - POST /ai/threads, GET /ai/threads/:id — historial de chat en KV (misma conversación desde cualquier PC)
  *
  * No bash or terminal: Workers cannot spawn a shell. Commands are HTTP calls to your APIs.
  * Optional: APROBADO_SELENIA in chat → POST repository_dispatch (see README).
@@ -17,7 +19,7 @@ const MODULES_BASE = {
     status: 'running',
     manifest: {
       name: 'Gastronomía OnBox',
-      commands: ['listar-pedidos', 'nuevo-pedido', 'estado-cocina', 'asignar-delivery', 'dashboard'],
+      commands: ['health-check', 'listar-pedidos', 'nuevo-pedido', 'estado-cocina', 'asignar-delivery', 'dashboard'],
     },
   },
   logistica: {
@@ -72,7 +74,7 @@ function ensureBootLogged() {
   Object.keys(MODULES_BASE).forEach((id) => pushEvent('module.registered', { id }));
   pushEvent('gateway.ready', {
     mode: 'worker',
-    routes: ['health', 'events', 'ops/overview', 'ai/chat', 'modules/*/command'],
+    routes: ['health', 'events', 'ops/overview', 'ops/audit', 'ai/chat', 'ai/threads', 'modules/*/command'],
   });
 }
 
@@ -166,6 +168,101 @@ function buildOpsSourcesDoc(cv2Base, legacyBase) {
   };
 }
 
+async function fetchGastronomiaDiagnostics(env) {
+  const proxyBase = String(
+    env.GASTRONOMIA_PROXY_URL || 'https://logistica-gastronomica-proxy.soporte-a90.workers.dev'
+  ).replace(/\/$/, '');
+  const paths = ['/health', '/api/health'];
+  const probes = [];
+  for (const path of paths) {
+    const url = proxyBase + path;
+    try {
+      const res = await fetch(url, { method: 'GET' });
+      const text = await res.text();
+      let json = null;
+      try {
+        json = text ? JSON.parse(text) : null;
+      } catch {
+        json = null;
+      }
+      const looksJson = !!(json && typeof json === 'object' && !Array.isArray(json));
+      const ok =
+        path === '/health'
+          ? res.ok && looksJson && json.ok !== false
+          : res.ok && looksJson;
+      probes.push({
+        path,
+        url,
+        status: res.status,
+        ok,
+        bodyIsJson: looksJson,
+      });
+    } catch (e) {
+      probes.push({ path, url, status: 0, ok: false, message: String(e.message || e) });
+    }
+  }
+  const mainProbe = probes.find((p) => p.path === '/health');
+  const mainOk = !!(mainProbe && mainProbe.ok);
+  return { proxyBase, probes, mainOk };
+}
+
+function mergeGastronomiaIntoOpsPayload(payload, gastro, pushErr, now) {
+  payload.gastronomia = {
+    proxyBase: gastro.proxyBase,
+    probes: gastro.probes,
+    mainOk: gastro.mainOk,
+  };
+  const apiP = (gastro.probes || []).find((p) => p.path === '/api/health');
+  if (!gastro.mainOk) {
+    const hp = gastro.probes.find((p) => p.path === '/health');
+    pushErr(
+      'gastronomia-proxy',
+      '/health',
+      hp?.status || 0,
+      hp?.message || 'GET /health no OK o cuerpo inválido'
+    );
+    payload.incidents.push({
+      id: 'gastro-proxy-health',
+      title: 'Gastronomía (proxy): GET /health no OK',
+      severity: 'high',
+      status: 'open',
+      owner: 'gastronomia',
+      openedAt: now,
+    });
+  } else if (apiP && !apiP.ok) {
+    pushErr(
+      'gastronomia-proxy',
+      '/api/health',
+      apiP.status || 0,
+      'HTTP no OK o respuesta no JSON (monitores / rutas legacy en el proxy)'
+    );
+    payload.incidents.push({
+      id: 'gastro-proxy-api-health',
+      title: 'Gastronomía (proxy): GET /api/health falla',
+      severity: 'medium',
+      status: 'open',
+      owner: 'gastronomia',
+      openedAt: now,
+    });
+  }
+  payload.modules = (payload.modules || []).map((m) =>
+    m.id === 'gastronomia' ? { ...m, status: !gastro.mainOk ? 'error' : m.status } : m
+  );
+  if (payload.sources && Array.isArray(payload.sources.calls)) {
+    payload.sources.calls.push({
+      method: 'GET',
+      url: `${gastro.proxyBase}/health`,
+      note: 'gastronomía — proxy (Selenia probe)',
+    });
+    payload.sources.calls.push({
+      method: 'GET',
+      url: `${gastro.proxyBase}/api/health`,
+      note: 'gastronomía — probe opcional',
+    });
+  }
+  if (payload.summary) payload.summary.activeAlerts = (payload.incidents || []).length;
+}
+
 async function buildHealth(env) {
   const uptime = Math.floor((Date.now() - WORKER_BOOT) / 1000);
   const core = await upstreamCore(env, '/health');
@@ -197,7 +294,8 @@ async function buildOpsOverview(env) {
     });
   };
 
-  const health = await buildHealth(env);
+  const now = Date.now();
+  const [health, gastro] = await Promise.all([buildHealth(env), fetchGastronomiaDiagnostics(env)]);
   const cv2Base = String(env.CORE_V2_URL || '').replace(/\/$/, '');
   const legacyBase = String(env.ONBOX_CORE_URL || 'https://onbox-core.soporte-a90.workers.dev').replace(/\/$/, '');
   const token = String(env.CORE_API_TOKEN || '').trim();
@@ -207,12 +305,11 @@ async function buildOpsOverview(env) {
     pushErr('selenia-worker', 'env.CORE_V2_URL', 0, 'CORE_V2_URL not configured');
   }
 
-  const now = Date.now();
   const tokenPresent = !!token;
   const empty = {
     generatedAt: now,
     errors,
-    contract: 'core-v2 README + docs/fulfillment-api.md + onbox-core README',
+    contract: 'core-v2 README + docs/fulfillment-api.md + onbox-core README + gastronomía proxy',
     meta: { coreApiTokenConfigured: tokenPresent },
     sources: buildOpsSourcesDoc(cv2Base, legacyBase),
     summary: {
@@ -241,6 +338,8 @@ async function buildOpsOverview(env) {
     })),
     incidents: [],
   };
+
+  mergeGastronomiaIntoOpsPayload(empty, gastro, pushErr, now);
 
   if (!cv2Base) {
     return empty;
@@ -386,10 +485,10 @@ async function buildOpsOverview(env) {
     heartbeatSec: null,
   }));
 
-  return {
+  const out = {
     generatedAt: now,
     errors,
-    contract: 'core-v2 README + docs/fulfillment-api.md + onbox-core README',
+    contract: 'core-v2 README + docs/fulfillment-api.md + onbox-core README + gastronomía proxy',
     meta: { coreApiTokenConfigured: tokenPresent },
     sources: buildOpsSourcesDoc(cv2Base, legacyBase),
     summary: {
@@ -411,9 +510,54 @@ async function buildOpsOverview(env) {
     modules,
     incidents,
   };
+  mergeGastronomiaIntoOpsPayload(out, gastro, pushErr, now);
+  return out;
 }
 
 const MAX_CHAT_MESSAGES = 24;
+const MAX_STORED_THREAD_MESSAGES = 80;
+const THREAD_KV_PREFIX = 'selenia:thread:';
+const THREAD_ID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function isValidThreadId(id) {
+  return typeof id === 'string' && THREAD_ID_RE.test(id.trim());
+}
+
+function trimMessageContent(s) {
+  const t = String(s || '');
+  if (t.length <= 48000) return t;
+  return t.slice(0, 48000) + '\n…(truncado)';
+}
+
+async function readThreadDoc(env, threadId) {
+  if (!env.SELENIA_KV) return null;
+  try {
+    const raw = await env.SELENIA_KV.get(THREAD_KV_PREFIX + threadId);
+    if (!raw) return null;
+    const j = JSON.parse(raw);
+    if (!j || typeof j !== 'object') return null;
+    return j;
+  } catch {
+    return null;
+  }
+}
+
+async function writeThreadDoc(env, threadId, messages) {
+  if (!env.SELENIA_KV || !isValidThreadId(threadId)) return false;
+  const normalized = normalizeAnthropicMessages(messages).slice(-MAX_STORED_THREAD_MESSAGES);
+  const safe = normalized.map((m) => ({
+    role: m.role,
+    content: trimMessageContent(m.content),
+  }));
+  const doc = {
+    threadId,
+    updatedAt: Date.now(),
+    messages: safe,
+  };
+  await env.SELENIA_KV.put(THREAD_KV_PREFIX + threadId, JSON.stringify(doc));
+  return true;
+}
 
 function normalizeAnthropicMessages(raw) {
   const list = Array.isArray(raw) ? raw : [];
@@ -537,6 +681,16 @@ async function runWhitelistedCommand(env, moduleId, action, payload) {
     };
   }
 
+  if (key === 'gastronomia:health-check' || key === 'gastronomia:dashboard') {
+    const gastro = await fetchGastronomiaDiagnostics(env);
+    pushEvent('module.command', { moduleId, action, via: 'gastronomia-proxy' });
+    return {
+      ok: gastro.mainOk,
+      result: gastro,
+      via: 'logistica-gastronomica-proxy',
+    };
+  }
+
   if (key === 'sistemas:logs') {
     pushEvent('module.command', { moduleId, action, stub: true });
     return {
@@ -602,6 +756,37 @@ async function handleApi(request, env) {
         core: core.ok ? 'reachable' : 'down',
         coreStatus: core.status,
         github_dispatch: env.GITHUB_TOKEN && String(env.GITHUB_REPO || '').trim() ? 'configured' : 'off',
+        chatThreads: env.SELENIA_KV ? 'kv' : 'off',
+      },
+      200,
+      corsHeaders()
+    );
+  }
+
+  if (method === 'POST' && pathname === '/ai/threads') {
+    if (!env.SELENIA_KV) {
+      return json({ threadId: crypto.randomUUID(), ephemeral: true }, 200, corsHeaders());
+    }
+    const id = crypto.randomUUID();
+    await writeThreadDoc(env, id, []);
+    return json({ threadId: id, ephemeral: false }, 200, corsHeaders());
+  }
+
+  const threadGet = pathname.match(/^\/ai\/threads\/([^/]+)$/);
+  if (method === 'GET' && threadGet) {
+    const threadId = threadGet[1];
+    if (!isValidThreadId(threadId)) return json({ error: 'invalid threadId' }, 400, corsHeaders());
+    if (!env.SELENIA_KV) {
+      return json({ threadId, updatedAt: Date.now(), messages: [], ephemeral: true }, 200, corsHeaders());
+    }
+    const doc = await readThreadDoc(env, threadId);
+    if (!doc) return json({ threadId, updatedAt: null, messages: [] }, 200, corsHeaders());
+    return json(
+      {
+        threadId: doc.threadId || threadId,
+        updatedAt: doc.updatedAt || null,
+        messages: Array.isArray(doc.messages) ? doc.messages : [],
+        ephemeral: false,
       },
       200,
       corsHeaders()
@@ -611,10 +796,22 @@ async function handleApi(request, env) {
   if (method === 'GET' && pathname === '/ops/overview') {
     try {
       const body = await buildOpsOverview(env);
-      return json(body, 200, corsHeaders());
+      return json(body, 200, { ...corsHeaders(), 'Cache-Control': 'no-store' });
     } catch (e) {
       pushEvent('ops.overview.error', { message: e.message });
-      return json({ error: e.message }, 502, corsHeaders());
+      return json({ error: e.message }, 502, { ...corsHeaders(), 'Cache-Control': 'no-store' });
+    }
+  }
+
+  if (method === 'GET' && pathname === '/ops/audit') {
+    try {
+      const origin = new URL(request.url).origin;
+      const body = await buildOpsAudit(env, origin, { headers: coreAuthHeaders(env) });
+      pushEvent('ops.audit', { total: body.summary?.total, fail: body.summary?.fail });
+      return json(body, 200, { ...corsHeaders(), 'Cache-Control': 'no-store' });
+    } catch (e) {
+      pushEvent('ops.audit.error', { message: e.message });
+      return json({ error: e.message }, 502, { ...corsHeaders(), 'Cache-Control': 'no-store' });
     }
   }
 
@@ -636,7 +833,13 @@ async function handleApi(request, env) {
       const reply = await anthropicChatMessages(env, messages, councilLite);
       pushEvent('selenia.chat.assistant', { chars: reply.length });
       const githubDispatch = await tryGithubRepositoryDispatch(request, env, body, lastUser?.content || '');
-      return json({ message: reply, githubDispatch }, 200, corsHeaders());
+      const threadId = typeof body.threadId === 'string' ? body.threadId.trim() : '';
+      let threadSaved = false;
+      if (threadId && isValidThreadId(threadId) && env.SELENIA_KV) {
+        const merged = normalizeAnthropicMessages([...messages, { role: 'assistant', content: reply }]);
+        threadSaved = await writeThreadDoc(env, threadId, merged);
+      }
+      return json({ message: reply, githubDispatch, threadId: threadId || undefined, threadSaved }, 200, corsHeaders());
     } catch (e) {
       pushEvent('selenia.chat.error', { message: e.message, code: e.code });
       const status = e.code === 'NO_API_KEY' ? 503 : e.status >= 400 && e.status < 600 ? e.status : 502;
@@ -668,14 +871,14 @@ function corsHeaders() {
   return {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Selenia-Dispatch-Key',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Selenia-Dispatch-Key, X-Selenia-Thread-Key',
   };
 }
 
 function isApiPath(pathname) {
   if (pathname === '/health') return true;
   if (pathname.startsWith('/events')) return true;
-  if (pathname === '/ops/overview') return true;
+  if (pathname === '/ops/overview' || pathname === '/ops/audit') return true;
   if (pathname.startsWith('/ai/')) return true;
   if (pathname.startsWith('/modules/') && pathname.endsWith('/command')) return true;
   if (pathname === '/connectors/health') return true;

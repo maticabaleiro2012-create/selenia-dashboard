@@ -8,6 +8,7 @@ require('dotenv').config();
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const { randomUUID } = require('crypto');
 
 const PORT = Number(process.env.PORT || 8780);
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
@@ -22,6 +23,9 @@ const SELENIA_DISPATCH_KEY = process.env.SELENIA_DISPATCH_KEY || '';
 const CORE_V2_URL = (process.env.CORE_V2_URL || 'https://onbox-core-v2.soporte-a90.workers.dev').replace(/\/$/, '');
 const ONBOX_CORE_URL = (process.env.ONBOX_CORE_URL || 'https://onbox-core.soporte-a90.workers.dev').replace(/\/$/, '');
 const CORE_API_TOKEN = String(process.env.CORE_API_TOKEN || '').trim();
+const GASTRONOMIA_PROXY_URL = (
+  process.env.GASTRONOMIA_PROXY_URL || 'https://logistica-gastronomica-proxy.soporte-a90.workers.dev'
+).replace(/\/$/, '');
 
 const START = Date.now();
 
@@ -30,7 +34,7 @@ const MODULES = {
     status: 'running',
     manifest: {
       name: 'Gastronomía OnBox',
-      commands: ['listar-pedidos', 'nuevo-pedido', 'estado-cocina', 'asignar-delivery', 'dashboard'],
+      commands: ['health-check', 'listar-pedidos', 'nuevo-pedido', 'estado-cocina', 'asignar-delivery', 'dashboard'],
     },
   },
   logistica: {
@@ -82,13 +86,27 @@ Object.keys(MODULES).forEach((id) => pushEvent('module.registered', { id }));
 pushEvent('gateway.ready', {
   mode: GATEWAY_URL ? 'proxy' : 'local-stub',
   port: PORT,
-  routes: ['health', 'events', 'ops/overview', 'ai/chat', 'modules/*/command'],
+  routes: ['health', 'events', 'ops/overview', 'ops/audit', 'ai/chat', 'ai/threads', 'modules/*/command'],
 });
 
 // Sync with worker/src/prompts.js (governance + council lite)
 const SYSTEM_BASE_LOCAL = `Sos Selenia, Command Center de OnBox (logística, e-commerce, gastronomía, 6 módulos).
 Runtime: Node local (dev). En prod el mismo rol corre en Cloudflare Worker. No shell en el Worker; deploy vía CI.
 Español rioplatense si el usuario escribe así. No inventés números de stock o pedidos sin datos de API.`;
+
+const SYSTEM_MAP_LOCAL = `
+## Mapa del ecosistema (referencia)
+
+| Ámbito | Qué es | Estado / datos reales |
+|--------|--------|------------------------|
+| Core v2 (Neon) | Pedidos, inventario, depósitos | GET CORE_V2_URL/health; con CORE_API_TOKEN: /clients/auth-audit, /inventory/summary, /orders/monitor, /deposits — GET /ops/overview y GET /ops/audit |
+| Onbox Core (legacy) | API histórica | GET ONBOX_CORE_URL/health |
+| Gastronomía | Proxy Worker | GET GASTRONOMIA_PROXY_URL/health y /api/health |
+| Selenia | Este servidor | GET /health, /connectors/health, /ops/overview, /ops/audit |
+| Módulos UI (6) | Verticales de negocio | POST /modules/:id/command (allowlist) |
+| Más URLs | Otros servicios | env SELENIA_AUDIT_EXTRA = JSON [{ id, label, url }] para /ops/audit |
+
+Para "auditar todo": usar GET /ops/audit (probes HTTP) + GET /ops/overview (métricas e incidentes).`;
 
 const GOVERNANCE_FULL_LOCAL = `
 ## Gobernanza (obligatorio)
@@ -125,7 +143,7 @@ Respondé en formato breve: riesgo principal, recomendación, una pregunta si ha
 `;
 
 function buildSystemPromptLocal(councilLite) {
-  return SYSTEM_BASE_LOCAL + (councilLite ? '\n' + GOVERNANCE_FULL_LOCAL : '\n' + GOVERNANCE_MINIMAL_LOCAL);
+  return SYSTEM_BASE_LOCAL + SYSTEM_MAP_LOCAL + (councilLite ? '\n' + GOVERNANCE_FULL_LOCAL : '\n' + GOVERNANCE_MINIMAL_LOCAL);
 }
 
 const MAX_CHAT_MESSAGES = 24;
@@ -147,6 +165,37 @@ function normalizeAnthropicMessages(raw) {
   }
   while (merged.length && merged[0].role !== 'user') merged.shift();
   return merged.slice(-MAX_CHAT_MESSAGES);
+}
+
+const MAX_STORED_THREAD_MESSAGES = 80;
+const THREAD_ID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const threadMemory = new Map();
+
+function isValidThreadId(id) {
+  return typeof id === 'string' && THREAD_ID_RE.test(id.trim());
+}
+
+function trimThreadMessageContent(s) {
+  const t = String(s || '');
+  if (t.length <= 48000) return t;
+  return t.slice(0, 48000) + '\n…(truncado)';
+}
+
+function readThreadDocNode(threadId) {
+  return threadMemory.get(threadId) || null;
+}
+
+function writeThreadDocNode(threadId, messages) {
+  if (!isValidThreadId(threadId)) return false;
+  const normalized = normalizeAnthropicMessages(messages).slice(-MAX_STORED_THREAD_MESSAGES);
+  const safe = normalized.map((m) => ({
+    role: m.role,
+    content: trimThreadMessageContent(m.content),
+  }));
+  const doc = { threadId, updatedAt: Date.now(), messages: safe };
+  threadMemory.set(threadId, doc);
+  return true;
 }
 
 async function readBody(req) {
@@ -283,6 +332,87 @@ async function fetchJsonNode(url, headers, source, endpoint, pushErr) {
   }
 }
 
+async function probeUrlNode(url, opt = {}) {
+  const t0 = Date.now();
+  try {
+    const res = await fetch(url, { method: opt.method || 'GET', headers: opt.headers, redirect: 'manual' });
+    const text = await res.text();
+    const ms = Date.now() - t0;
+    let json = null;
+    try {
+      json = text && (text.startsWith('{') || text.startsWith('[')) ? JSON.parse(text) : null;
+    } catch {
+      json = null;
+    }
+    const looksJson = !!(json && typeof json === 'object');
+    const snippet = looksJson
+      ? JSON.stringify(json).slice(0, 360)
+      : String(text || '')
+          .replace(/\s+/g, ' ')
+          .slice(0, 160);
+    return { ok: res.ok, status: res.status, ms, looksJson, snippet };
+  } catch (e) {
+    return { ok: false, status: 0, ms: Date.now() - t0, looksJson: false, snippet: String(e.message || e).slice(0, 200) };
+  }
+}
+
+async function buildOpsAuditForNode(requestUrl) {
+  const origin = new URL(requestUrl || '/', `http://127.0.0.1:${PORT}`).origin;
+  const cv2 = String(CORE_V2_URL || '').replace(/\/$/, '');
+  const leg = String(ONBOX_CORE_URL || '').replace(/\/$/, '');
+  const gastroBase = String(GASTRONOMIA_PROXY_URL || '').replace(/\/$/, '');
+  const auth = authHeadersNode();
+  const token = CORE_API_TOKEN;
+
+  const plan = [];
+  if (cv2) plan.push({ id: 'core-v2-health', label: 'Core v2 /health', url: `${cv2}/health` });
+  plan.push({ id: 'onbox-core-health', label: 'Onbox Core /health', url: `${leg}/health` });
+  if (gastroBase) {
+    plan.push({ id: 'gastro-health', label: 'Gastronomía /health', url: `${gastroBase}/health` });
+    plan.push({ id: 'gastro-api-health', label: 'Gastronomía /api/health', url: `${gastroBase}/api/health` });
+  }
+  plan.push({ id: 'selenia-health', label: 'Selenia /health', url: `${origin}/health` });
+  plan.push({ id: 'selenia-connectors', label: 'Selenia /connectors/health', url: `${origin}/connectors/health` });
+  if (token && cv2) plan.push({ id: 'core-v2-auth-audit', label: 'Core v2 /clients/auth-audit', url: `${cv2}/clients/auth-audit`, headers: auth });
+
+  const probes = [];
+  for (const p of plan) {
+    const r = await probeUrlNode(p.url, { headers: p.headers });
+    probes.push({ id: p.id, label: p.label, url: p.url, ...r });
+  }
+
+  const notes = [];
+  try {
+    const raw = String(process.env.SELENIA_AUDIT_EXTRA || '').trim();
+    if (raw) {
+      const extra = JSON.parse(raw);
+      if (Array.isArray(extra)) {
+        for (const e of extra) {
+          const u = e && typeof e.url === 'string' ? e.url.trim() : '';
+          if (!u) continue;
+          const method = typeof e.method === 'string' ? e.method : 'GET';
+          const h = e.headers && typeof e.headers === 'object' ? e.headers : undefined;
+          const r = await probeUrlNode(u, { method, headers: h });
+          probes.push({ id: String(e.id || 'extra'), label: String(e.label || u), url: u, ...r });
+        }
+      } else {
+        notes.push('SELENIA_AUDIT_EXTRA no es un array JSON');
+      }
+    }
+  } catch (err) {
+    notes.push(`SELENIA_AUDIT_EXTRA inválido: ${String(err.message || err)}`);
+  }
+
+  const fail = probes.filter((x) => !x.ok).length;
+  return {
+    generatedAt: Date.now(),
+    contract: 'read-only GET (Node local)',
+    summary: { total: probes.length, ok: probes.length - fail, fail },
+    probes,
+    notes,
+  };
+}
+
 function buildOpsSourcesDocNode(cv2Base, legacyBase) {
   const c = String(cv2Base || '').replace(/\/$/, '');
   const l = String(legacyBase || '').replace(/\/$/, '');
@@ -306,6 +436,99 @@ function buildOpsSourcesDocNode(cv2Base, legacyBase) {
       { method: 'GET', url: `${c}/deposits`, note: 'core-v2 README' },
     ],
   };
+}
+
+async function fetchGastronomiaDiagnosticsNode() {
+  const proxyBase = GASTRONOMIA_PROXY_URL;
+  const paths = ['/health', '/api/health'];
+  const probes = [];
+  for (const path of paths) {
+    const url = proxyBase + path;
+    try {
+      const res = await fetch(url, { method: 'GET' });
+      const text = await res.text();
+      let json = null;
+      try {
+        json = text ? JSON.parse(text) : null;
+      } catch {
+        json = null;
+      }
+      const looksJson = !!(json && typeof json === 'object' && !Array.isArray(json));
+      const ok =
+        path === '/health'
+          ? res.ok && looksJson && json.ok !== false
+          : res.ok && looksJson;
+      probes.push({
+        path,
+        url,
+        status: res.status,
+        ok,
+        bodyIsJson: looksJson,
+      });
+    } catch (e) {
+      probes.push({ path, url, status: 0, ok: false, message: String(e.message || e) });
+    }
+  }
+  const mainProbe = probes.find((p) => p.path === '/health');
+  const mainOk = !!(mainProbe && mainProbe.ok);
+  return { proxyBase, probes, mainOk };
+}
+
+function mergeGastronomiaIntoOpsPayloadNode(payload, gastro, pushErr, now) {
+  payload.gastronomia = {
+    proxyBase: gastro.proxyBase,
+    probes: gastro.probes,
+    mainOk: gastro.mainOk,
+  };
+  const apiP = (gastro.probes || []).find((p) => p.path === '/api/health');
+  if (!gastro.mainOk) {
+    const hp = gastro.probes.find((p) => p.path === '/health');
+    pushErr(
+      'gastronomia-proxy',
+      '/health',
+      hp?.status || 0,
+      hp?.message || 'GET /health no OK o cuerpo inválido'
+    );
+    payload.incidents.push({
+      id: 'gastro-proxy-health',
+      title: 'Gastronomía (proxy): GET /health no OK',
+      severity: 'high',
+      status: 'open',
+      owner: 'gastronomia',
+      openedAt: now,
+    });
+  } else if (apiP && !apiP.ok) {
+    pushErr(
+      'gastronomia-proxy',
+      '/api/health',
+      apiP.status || 0,
+      'HTTP no OK o respuesta no JSON (monitores / rutas legacy en el proxy)'
+    );
+    payload.incidents.push({
+      id: 'gastro-proxy-api-health',
+      title: 'Gastronomía (proxy): GET /api/health falla',
+      severity: 'medium',
+      status: 'open',
+      owner: 'gastronomia',
+      openedAt: now,
+    });
+  }
+  payload.modules = (payload.modules || []).map((m) =>
+    m.id === 'gastronomia' ? { ...m, status: !gastro.mainOk ? 'error' : m.status } : m
+  );
+  if (payload.sources && Array.isArray(payload.sources.calls)) {
+    payload.sources.calls.push({
+      method: 'GET',
+      url: `${gastro.proxyBase}/health`,
+      note: 'gastronomía — proxy (Selenia probe)',
+    });
+    payload.sources.calls.push({
+      method: 'GET',
+      url: `${gastro.proxyBase}/api/health`,
+      note: 'gastronomía — probe opcional',
+    });
+  }
+  if (payload.summary) payload.summary.activeAlerts = (payload.incidents || []).length;
 }
 
 async function buildHealthForNode() {
@@ -338,20 +561,20 @@ async function buildOpsOverviewForNode() {
     });
   };
 
-  const health = await buildHealthForNode();
+  const now = Date.now();
+  const [health, gastro] = await Promise.all([buildHealthForNode(), fetchGastronomiaDiagnosticsNode()]);
   const cv2Base = CORE_V2_URL;
   const legacyBase = ONBOX_CORE_URL;
   const token = CORE_API_TOKEN;
   const authH = authHeadersNode();
-  const now = Date.now();
   const tokenPresent = !!token;
 
   if (!cv2Base) {
     pushErr('selenia-local', 'env.CORE_V2_URL', 0, 'CORE_V2_URL not configured');
-    return {
+    const empty = {
       generatedAt: now,
       errors,
-      contract: 'core-v2 README + docs/fulfillment-api.md + onbox-core README',
+      contract: 'core-v2 README + docs/fulfillment-api.md + onbox-core README + gastronomía proxy',
       meta: { coreApiTokenConfigured: tokenPresent },
       sources: buildOpsSourcesDocNode(cv2Base, legacyBase),
       summary: {
@@ -380,6 +603,8 @@ async function buildOpsOverviewForNode() {
       })),
       incidents: [],
     };
+    mergeGastronomiaIntoOpsPayloadNode(empty, gastro, pushErr, now);
+    return empty;
   }
 
   if (!token) {
@@ -508,10 +733,10 @@ async function buildOpsOverviewForNode() {
     heartbeatSec: null,
   }));
 
-  return {
+  const out = {
     generatedAt: now,
     errors,
-    contract: 'core-v2 README + docs/fulfillment-api.md + onbox-core README',
+    contract: 'core-v2 README + docs/fulfillment-api.md + onbox-core README + gastronomía proxy',
     meta: { coreApiTokenConfigured: tokenPresent },
     sources: buildOpsSourcesDocNode(cv2Base, legacyBase),
     summary: {
@@ -533,9 +758,17 @@ async function buildOpsOverviewForNode() {
     modules,
     incidents,
   };
+  mergeGastronomiaIntoOpsPayloadNode(out, gastro, pushErr, now);
+  return out;
 }
 
 async function proxyCommand(moduleId, body) {
+  const action = typeof body.action === 'string' ? body.action : '';
+  if (moduleId === 'gastronomia' && (action === 'health-check' || action === 'dashboard')) {
+    const gastro = await fetchGastronomiaDiagnosticsNode();
+    pushEvent('module.command', { moduleId, action, via: 'gastronomia-proxy' });
+    return { ok: gastro.mainOk, result: gastro, via: 'logistica-gastronomica-proxy' };
+  }
   if (!GATEWAY_URL) {
     return {
       ok: true,
@@ -576,9 +809,21 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && pathname === '/ops/overview') {
     try {
       const body = await buildOpsOverviewForNode();
-      send(res, 200, body);
+      send(res, 200, body, { 'Cache-Control': 'no-store' });
     } catch (e) {
-      send(res, 502, { error: e.message || String(e) });
+      send(res, 502, { error: e.message || String(e) }, { 'Cache-Control': 'no-store' });
+    }
+    return;
+  }
+
+  if (req.method === 'GET' && pathname === '/ops/audit') {
+    try {
+      const fullUrl = new URL(req.url || '/', `http://127.0.0.1:${PORT}`).toString();
+      const body = await buildOpsAuditForNode(fullUrl);
+      pushEvent('ops.audit', { total: body.summary?.total, fail: body.summary?.fail });
+      send(res, 200, body, { 'Cache-Control': 'no-store' });
+    } catch (e) {
+      send(res, 502, { error: e.message || String(e) }, { 'Cache-Control': 'no-store' });
     }
     return;
   }
@@ -597,6 +842,35 @@ const server = http.createServer(async (req, res) => {
     send(res, 200, {
       status: ANTHROPIC_API_KEY ? 'anthropic_configured' : 'anthropic_missing',
       github_dispatch: GITHUB_TOKEN && GITHUB_REPO ? 'configured' : 'off',
+      chatThreads: 'memory',
+    });
+    return;
+  }
+
+  if (req.method === 'POST' && pathname === '/ai/threads') {
+    const id = randomUUID();
+    writeThreadDocNode(id, []);
+    send(res, 200, { threadId: id, ephemeral: false });
+    return;
+  }
+
+  const threadGet = pathname.match(/^\/ai\/threads\/([^/]+)$/);
+  if (req.method === 'GET' && threadGet) {
+    const threadId = threadGet[1];
+    if (!isValidThreadId(threadId)) {
+      send(res, 400, { error: 'invalid threadId' });
+      return;
+    }
+    const doc = readThreadDocNode(threadId);
+    if (!doc) {
+      send(res, 200, { threadId, updatedAt: null, messages: [], ephemeral: false });
+      return;
+    }
+    send(res, 200, {
+      threadId: doc.threadId || threadId,
+      updatedAt: doc.updatedAt || null,
+      messages: Array.isArray(doc.messages) ? doc.messages : [],
+      ephemeral: false,
     });
     return;
   }
@@ -620,7 +894,13 @@ const server = http.createServer(async (req, res) => {
       const reply = await anthropicChatMessages(messages, councilLite);
       pushEvent('selenia.chat.assistant', { chars: reply.length });
       const githubDispatch = await tryGithubRepositoryDispatchNode(req, body, lastUser?.content || '');
-      send(res, 200, { message: reply, githubDispatch });
+      const threadId = typeof body.threadId === 'string' ? body.threadId.trim() : '';
+      let threadSaved = false;
+      if (threadId && isValidThreadId(threadId)) {
+        const merged = normalizeAnthropicMessages([...messages, { role: 'assistant', content: reply }]);
+        threadSaved = writeThreadDocNode(threadId, merged);
+      }
+      send(res, 200, { message: reply, githubDispatch, threadId: threadId || undefined, threadSaved });
     } catch (e) {
       pushEvent('selenia.chat.error', { message: e.message, code: e.code });
       const status = e.code === 'NO_API_KEY' ? 503 : e.status >= 400 && e.status < 600 ? e.status : 502;

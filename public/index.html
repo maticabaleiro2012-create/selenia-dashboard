@@ -530,6 +530,9 @@
   }
   .chat-send:hover { background: #1d4ed8; }
   .chat-send:disabled { opacity: 0.45; cursor: not-allowed; }
+  .chat-send--mic { background: var(--surface); color: var(--text); border-color: var(--border); font-size: 18px; }
+  .chat-send--mic:hover { background: var(--bg3); }
+  .chat-send--mic.recording { outline: 2px solid var(--accent2); outline-offset: 1px; }
 
   /* === MODAL === */
   .modal-overlay {
@@ -715,6 +718,11 @@
         </div>
         <div class="ops-sources" id="opsSources"></div>
         <div class="ops-errors" id="opsErrors" hidden></div>
+        <div style="margin-top:12px;display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+          <button type="button" class="hud-btn" id="runAuditBtn">Auditoría HTTP (todo)</button>
+          <span style="font-size:11px;color:var(--text2)">GET /ops/audit — Core, legacy, gastronomía, Selenia; extra con SELENIA_AUDIT_EXTRA</span>
+        </div>
+        <div id="auditResult" class="audit-result" hidden style="margin-top:10px;font-size:12px;line-height:1.45"></div>
       </div>
       <div class="ops-side">
         <div class="ops-panel">
@@ -733,6 +741,11 @@
           </div>
         </div>
       </div>
+    </div>
+
+    <div class="ops-panel" id="gastroOpsPanel" hidden style="margin-bottom:22px">
+      <h3>Gastronomía — chequeo proxy (solo lectura)</h3>
+      <div id="gastroOpsBody" style="font-size:12px;color:var(--text);line-height:1.5"></div>
     </div>
 
     <!-- Modules -->
@@ -759,15 +772,20 @@
       <label class="hud-label" style="display:flex;align-items:center;gap:6px;cursor:pointer;white-space:nowrap">
         <input type="checkbox" id="councilLite" checked /> Council
       </label>
+      <label class="hud-label" style="display:flex;align-items:center;gap:6px;cursor:pointer;white-space:nowrap" title="Lee en voz alta la última respuesta">
+        <input type="checkbox" id="voiceRead" /> Voz
+      </label>
       <button type="button" class="hud-btn" id="newChatBtn">Nuevo chat</button>
     </div>
+    <div id="threadRow" class="thread-row" style="padding:0 14px 8px;font-size:11px;color:var(--text2);line-height:1.45"></div>
     <div class="chat-messages" id="chatMessages"></div>
     <div style="padding:0 14px 10px">
       <label class="hud-label" for="dispatchKeyInput">Dispatch key (opcional)</label>
       <input type="password" class="hud-input" id="dispatchKeyInput" autocomplete="off" placeholder="SELENIA_DISPATCH_KEY en Worker" />
     </div>
     <div class="chat-input-area">
-      <textarea class="chat-input" id="chatInput" rows="1" placeholder="Escribí tu mensaje..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat()}"></textarea>
+      <textarea class="chat-input" id="chatInput" rows="1" placeholder="Escribí o dictá con el mic…" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat()}"></textarea>
+      <button type="button" class="chat-send chat-send--mic" id="voiceDictateBtn" title="Dictar (navegador)">🎤</button>
       <button class="chat-send" id="chatSend" onclick="sendChat()">→</button>
     </div>
   </div>
@@ -785,8 +803,14 @@
 <script>
 const API = window.location.origin;
 let DEMO_MODE = false;
-/** Historial Anthropic (user o assistant); no se guarda en servidor = $0 KV. */
+const THREAD_LS_KEY = 'selenia_thread_id';
+const CHAT_BACKUP_PREFIX = 'selenia_chat_backup:';
+/** Historial Anthropic (user o assistant); con KV en Worker también se persiste en nube. */
 let chatTranscript = [];
+let currentThreadId = null;
+let chatPersistence = 'local';
+let dictationRec = null;
+let dictationActive = false;
 const MODULE_META = {
   gastronomia: { icon: '🍕', color: '#fdcb6e', desc: 'Pedidos, delivery, cocina, app clientes' },
   logistica: { icon: '🚚', color: '#74b9ff', desc: 'Rutas, drivers, zonas, tracking, scanner' },
@@ -798,10 +822,12 @@ const MODULE_META = {
 
 const COMMANDS = {
   gastronomia: [
-    { name: 'crear-pedido', desc: 'Crear nuevo pedido gastronómico' },
-    { name: 'cambiar-estado-pedido', desc: 'Cambiar estado de un pedido' },
-    { name: 'asignar-repartidor', desc: 'Asignar repartidor a pedido' },
-    { name: 'dashboard', desc: 'Ver métricas del módulo' },
+    { name: 'health-check', desc: 'Probar GET /health y /api/health del proxy gastronómico' },
+    { name: 'listar-pedidos', desc: 'Listar pedidos (requiere gateway / API real)' },
+    { name: 'nuevo-pedido', desc: 'Nuevo pedido' },
+    { name: 'estado-cocina', desc: 'Estado cocina / turno' },
+    { name: 'asignar-delivery', desc: 'Asignar delivery a pedido' },
+    { name: 'dashboard', desc: 'Métricas (mismo chequeo que health-check por ahora)' },
   ],
   logistica: [
     { name: 'crear-envio', desc: 'Crear nuevo envío' },
@@ -894,7 +920,7 @@ function renderOpsSources(ov) {
 
 // === DEMO DATA ===
 const DEMO_MODULES = {
-  gastronomia: { status: 'running', manifest: { name: 'Gastronomía OnBox', commands: ['listar-pedidos','nuevo-pedido','estado-cocina','asignar-delivery','menu-del-dia','reservar-mesa','carta-qr','dashboard'] } },
+  gastronomia: { status: 'running', manifest: { name: 'Gastronomía OnBox', commands: ['health-check','listar-pedidos','nuevo-pedido','estado-cocina','asignar-delivery','dashboard'] } },
   logistica: { status: 'running', manifest: { name: 'Logística & Delivery', commands: ['asignar-envio','tracking','listar-drivers','optimizar-rutas','scan-paquete','dashboard'] } },
   'onbox-market': { status: 'running', manifest: { name: 'Onbox Marketplace', commands: ['listar-productos','publicar-ml','sync-stock','importar-ordenes','sync-shopify','sync-tiendanube','dashboard'] } },
   retail: { status: 'running', manifest: { name: 'Retail & Inventario', commands: ['consultar-stock','entrada-mercaderia','ajuste-inventario','alerta-stock-bajo','reporte-valorizado','dashboard'] } },
@@ -930,6 +956,12 @@ async function api(path, opts = {}) {
     if (path === '/events/stats') return { historySize: DEMO_EVENTS.length };
     if (path === '/events/history') return DEMO_EVENTS;
     if (path === '/ops/overview') return buildDemoOpsOverview();
+    if (path === '/ai/threads' && opts.method === 'POST') {
+      return { threadId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', ephemeral: true };
+    }
+    if (path.startsWith('/ai/threads/')) {
+      return { threadId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', updatedAt: Date.now(), messages: [], ephemeral: true };
+    }
     if (path.startsWith('/ai/chat')) {
       let hint = '';
       try {
@@ -942,10 +974,23 @@ async function api(path, opts = {}) {
         ? '**Demo** — En prod esto va a Claude con council y memoria de chat.\n\n' + DEMO_AI_RESPONSES[demoAiIndex % DEMO_AI_RESPONSES.length]
         : DEMO_AI_RESPONSES[demoAiIndex % DEMO_AI_RESPONSES.length];
       demoAiIndex++;
-      return { message: resp };
+      return { message: resp, threadSaved: false };
     }
     if (path.includes('/command')) return { ok: true, result: 'Comando ejecutado (demo mode)' };
-    if (path === '/connectors/health') return { status: 'demo' };
+    if (path === '/connectors/health') return { status: 'demo', chatThreads: 'demo' };
+    if (path === '/ops/audit') {
+      return {
+        generatedAt: Date.now(),
+        contract: 'demo',
+        summary: { total: 3, ok: 2, fail: 1 },
+        probes: [
+          { id: 'core-v2-health', label: 'Core v2', url: 'https://…/health', ok: true, status: 200, ms: 40, looksJson: true, snippet: '{"ok":true}' },
+          { id: 'gastro-api-health', label: 'Gastro /api/health', url: 'https://…/api/health', ok: false, status: 500, ms: 20, looksJson: false, snippet: 'html…' },
+          { id: 'selenia-health', label: 'Selenia', url: '/', ok: true, status: 200, ms: 5, looksJson: true, snippet: '{}' },
+        ],
+        notes: [],
+      };
+    }
     return {};
   }
   const res = await fetch(`${API}${path}`, {
@@ -961,9 +1006,167 @@ async function api(path, opts = {}) {
   return data;
 }
 
+function saveChatBackup() {
+  if (!currentThreadId) return;
+  try {
+    localStorage.setItem(CHAT_BACKUP_PREFIX + currentThreadId, JSON.stringify(chatTranscript));
+  } catch (_) {}
+}
+
+function loadChatBackup() {
+  if (!currentThreadId) return null;
+  try {
+    const raw = localStorage.getItem(CHAT_BACKUP_PREFIX + currentThreadId);
+    if (!raw) return null;
+    const j = JSON.parse(raw);
+    return Array.isArray(j) ? j : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function updateThreadBadge() {
+  const el = document.getElementById('threadRow');
+  if (!el) return;
+  const short = (currentThreadId || '').slice(0, 8);
+  const mode =
+    chatPersistence === 'kv'
+      ? 'Historial en nube (otra PC con la misma URL)'
+      : 'Sin KV en Worker: backup en este navegador';
+  el.innerHTML =
+    `<span>Hilo <code style="font-size:10px">${escapeHtml(short)}…</code> · ${escapeHtml(mode)}</span> · ` +
+    `<button type="button" class="hud-btn" id="copyThreadUrl">Copiar URL</button>`;
+  const btn = document.getElementById('copyThreadUrl');
+  if (btn) {
+    btn.onclick = () => {
+      const u = `${window.location.origin}/?thread=${encodeURIComponent(currentThreadId || '')}`;
+      navigator.clipboard.writeText(u).then(
+        () => {
+          btn.textContent = 'Copiado';
+          setTimeout(() => { btn.textContent = 'Copiar URL'; }, 1600);
+        },
+        () => {
+          prompt('Copiá esta URL:', u);
+        }
+      );
+    };
+  }
+}
+
+async function ensureThread() {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('voice') === '1') {
+    const vr = document.getElementById('voiceRead');
+    if (vr) vr.checked = true;
+  }
+  try {
+    const q = params.get('thread');
+    if (q && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(q)) {
+      currentThreadId = q;
+      localStorage.setItem(THREAD_LS_KEY, currentThreadId);
+    } else {
+      const ls = localStorage.getItem(THREAD_LS_KEY);
+      if (ls && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(ls)) currentThreadId = ls;
+    }
+    if (!currentThreadId) {
+      const cr = await api('/ai/threads', { method: 'POST', body: JSON.stringify({}) });
+      currentThreadId = cr.threadId;
+      localStorage.setItem(THREAD_LS_KEY, currentThreadId);
+      chatPersistence = cr.ephemeral ? 'local' : 'kv';
+    } else {
+      const data = await api(`/ai/threads/${encodeURIComponent(currentThreadId)}`);
+      chatPersistence = data.ephemeral ? 'local' : 'kv';
+      const fromServer = Array.isArray(data.messages)
+        ? data.messages.filter((m) => m && (m.role === 'user' || m.role === 'assistant') && m.content)
+        : [];
+      if (fromServer.length) chatTranscript = fromServer;
+      else {
+        const bak = loadChatBackup();
+        if (bak && bak.length) chatTranscript = bak;
+      }
+    }
+  } catch (_) {
+    if (!currentThreadId) currentThreadId = crypto.randomUUID();
+    localStorage.setItem(THREAD_LS_KEY, currentThreadId);
+    chatPersistence = 'local';
+    const bak = loadChatBackup();
+    if (bak && bak.length) chatTranscript = bak;
+  }
+  updateThreadBadge();
+  if (params.get('mic') === '1') {
+    const box = document.getElementById('chatMessages');
+    if (box) {
+      box.insertAdjacentHTML(
+        'beforeend',
+        '<div class="chat-msg system">Tip: hacé clic en el micrófono para dictar (el navegador pide permiso la primera vez).</div>'
+      );
+      box.scrollTop = box.scrollHeight;
+    }
+  }
+}
+
+function setupVoiceDictation() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const btn = document.getElementById('voiceDictateBtn');
+  if (!btn) return;
+  if (!SR) {
+    btn.disabled = true;
+    btn.title = 'Dictado no disponible en este navegador';
+    return;
+  }
+  const rec = new SR();
+  rec.lang = 'es-AR';
+  rec.continuous = false;
+  rec.interimResults = true;
+  rec.onresult = (ev) => {
+    let t = '';
+    for (let i = ev.resultIndex; i < ev.results.length; i++) t += ev.results[i][0].transcript;
+    const input = document.getElementById('chatInput');
+    if (input && t) input.value = (String(input.value || '') + ' ' + t).trim();
+  };
+  rec.onerror = () => {
+    dictationActive = false;
+    btn.classList.remove('recording');
+  };
+  rec.onend = () => {
+    dictationActive = false;
+    btn.classList.remove('recording');
+  };
+  btn.addEventListener('click', () => {
+    if (dictationActive) {
+      try {
+        rec.stop();
+      } catch (_) {}
+      return;
+    }
+    try {
+      dictationActive = true;
+      btn.classList.add('recording');
+      rec.start();
+    } catch (_) {
+      dictationActive = false;
+      btn.classList.remove('recording');
+    }
+  });
+  dictationRec = rec;
+}
+
+function speakAssistant(text) {
+  if (!text || !window.speechSynthesis) return;
+  try {
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = 'es-AR';
+    window.speechSynthesis.speak(u);
+  } catch (_) {}
+}
+
 // === INIT ===
 async function init() {
   renderChatFromTranscript();
+  await ensureThread();
+  renderChatFromTranscript();
+  setupVoiceDictation();
   try {
     await refreshStatus();
     await refreshEvents();
@@ -1222,6 +1425,53 @@ function renderModuleMatrix(mods, history, overview) {
   matrix.innerHTML = rows.join('');
 }
 
+async function runFullAudit() {
+  const box = document.getElementById('auditResult');
+  if (!box) return;
+  box.hidden = false;
+  box.innerHTML = '<span class="loading">Auditando…</span>';
+  try {
+    const data = await api('/ops/audit');
+    const s = data.summary || {};
+    const rows = (data.probes || [])
+      .map(
+        (p) =>
+          `<tr><td>${escapeHtml(p.label || p.id)}</td><td>${p.ok ? '✓' : '✗'}</td><td>${p.status}</td><td>${p.ms != null ? p.ms + 'ms' : '—'}</td><td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(p.snippet || '')}">${escapeHtml((p.snippet || '').slice(0, 80))}</td><td><a href="${escapeHtml(p.url || '')}" target="_blank" rel="noopener noreferrer">abrir</a></td></tr>`
+      )
+      .join('');
+    const notes = (data.notes || []).map((n) => `<div style="color:var(--orange);margin-top:4px">${escapeHtml(n)}</div>`).join('');
+    box.innerHTML = `<div style="margin-bottom:6px"><strong>Resumen:</strong> ${s.ok ?? '—'} OK / ${s.fail ?? '—'} fallan (${s.total ?? '—'} probes)</div><table style="width:100%;border-collapse:collapse;font-size:11px"><thead><tr><th align="left">Servicio</th><th>OK</th><th>HTTP</th><th>Lat</th><th>Snippet</th><th></th></tr></thead><tbody>${rows}</tbody></table>${notes}`;
+  } catch (e) {
+    box.innerHTML = `<span style="color:var(--red)">${escapeHtml(e.message)}</span>`;
+  }
+}
+
+function renderGastroOps(overview) {
+  const panel = document.getElementById('gastroOpsPanel');
+  const body = document.getElementById('gastroOpsBody');
+  if (!panel || !body) return;
+  const g = overview && overview.gastronomia;
+  if (!g || !Array.isArray(g.probes) || !g.probes.length) {
+    panel.hidden = true;
+    body.innerHTML = '';
+    return;
+  }
+  panel.hidden = false;
+  const lines = g.probes.map((p) => {
+    const st = p.ok ? '✓' : '✗';
+    const cls = p.ok ? 'var(--green)' : 'var(--red)';
+    const url = escapeHtml(p.url || '');
+    return `<div style="margin:6px 0"><span style="color:${cls};font-weight:700">${st}</span> <code>${escapeHtml(p.path)}</code> <span style="color:var(--text2)">HTTP ${p.status}</span> &nbsp;<a href="${url}" target="_blank" rel="noopener noreferrer" style="font-size:11px;color:var(--accent)">probar</a></div>`;
+  });
+  const note = g.mainOk
+    ? '<div style="margin-top:8px;color:var(--text2)">/health OK. Si /api/health falla, corregilo en el worker <code>logistica-gastronomica-proxy</code> (repo app-clientes-gastronomia-onbox).</div>'
+    : '<div style="margin-top:8px;color:var(--orange)">/health no OK: revisá el proxy o variables.</div>';
+  body.innerHTML =
+    `<div style="color:var(--text2);font-size:11px;margin-bottom:6px">Base: <code>${escapeHtml(g.proxyBase || '')}</code></div>` +
+    lines.join('') +
+    note;
+}
+
 function renderOpsErrors(overview) {
   const el = document.getElementById('opsErrors');
   if (!el) return;
@@ -1268,6 +1518,7 @@ function renderOpsPanels(mods, history, overview) {
       ).join('');
     }
     renderOpsErrors(overview);
+    renderGastroOps(overview);
     return;
   }
 
@@ -1314,6 +1565,7 @@ function renderOpsPanels(mods, history, overview) {
     ).join('');
   }
   renderOpsErrors(overview);
+  renderGastroOps(overview);
 }
 
 function getModuleOverview(id, overview = opsOverview) {
@@ -1360,7 +1612,7 @@ function buildDemoOpsOverview() {
       throughputPerMin: 36,
       ordersMonitorCount: 42,
       mttrMin: 5,
-      activeAlerts: 0,
+      activeAlerts: 1,
       inventory: { onbox: { skuRows: 120, totalUnits: 4800 }, fulfillment: { skuRows: 40, totalUnits: 900 } },
       depositsCount: 4,
     },
@@ -1369,7 +1621,36 @@ function buildDemoOpsOverview() {
       { id: 'onbox-core', name: 'Onbox Core (demo)', status: 'running', endpoint: '/health' },
     ],
     modules: mods,
-    incidents: [],
+    incidents: [
+      {
+        id: 'gastro-proxy-api-health',
+        severity: 'medium',
+        title: 'Gastronomía (proxy): GET /api/health falla',
+        owner: 'gastronomia',
+        status: 'open',
+        openedAt: Date.now(),
+      },
+    ],
+    gastronomia: {
+      proxyBase: 'https://logistica-gastronomica-proxy.soporte-a90.workers.dev',
+      mainOk: true,
+      probes: [
+        {
+          path: '/health',
+          url: 'https://logistica-gastronomica-proxy.soporte-a90.workers.dev/health',
+          status: 200,
+          ok: true,
+          bodyIsJson: true,
+        },
+        {
+          path: '/api/health',
+          url: 'https://logistica-gastronomica-proxy.soporte-a90.workers.dev/api/health',
+          status: 500,
+          ok: false,
+          bodyIsJson: false,
+        },
+      ],
+    },
   };
 }
 
@@ -1451,7 +1732,7 @@ async function runCommand(moduleId, action) {
 function renderChatFromTranscript() {
   const msgs = document.getElementById('chatMessages');
   const lines = [
-    '<div class="chat-msg system">Selenia lista. Cambios riesgosos: confirmá con <strong>APROBADO_SELENIA</strong> cuando la IA lo pida.</div>',
+    '<div class="chat-msg system">Selenia lista. Mismo hilo en otra PC: <strong>Copiar URL</strong> o abrí con <code>?thread=…</code>. Dictado: micrófono. Cambios riesgosos: <strong>APROBADO_SELENIA</strong>.</div>',
   ];
   for (const m of chatTranscript) {
     if (m.role === 'user') lines.push(`<div class="chat-msg user">${escapeHtml(m.content)}</div>`);
@@ -1461,12 +1742,29 @@ function renderChatFromTranscript() {
   msgs.scrollTop = msgs.scrollHeight;
 }
 
-function resetChat() {
+async function resetChat() {
+  const prev = currentThreadId;
   chatTranscript = [];
+  if (prev) {
+    try {
+      localStorage.removeItem(CHAT_BACKUP_PREFIX + prev);
+    } catch (_) {}
+  }
+  try {
+    const cr = await api('/ai/threads', { method: 'POST', body: JSON.stringify({}) });
+    currentThreadId = cr.threadId;
+    chatPersistence = cr.ephemeral ? 'local' : 'kv';
+    localStorage.setItem(THREAD_LS_KEY, currentThreadId);
+  } catch (_) {
+    currentThreadId = crypto.randomUUID();
+    chatPersistence = 'local';
+    localStorage.setItem(THREAD_LS_KEY, currentThreadId);
+  }
+  updateThreadBadge();
   renderChatFromTranscript();
 }
 
-document.getElementById('newChatBtn').addEventListener('click', resetChat);
+document.getElementById('newChatBtn').addEventListener('click', () => resetChat());
 
 async function sendChat() {
   const input = document.getElementById('chatInput');
@@ -1487,7 +1785,7 @@ async function sendChat() {
   const councilLite = document.getElementById('councilLite').checked;
 
   try {
-    const payload = { messages: chatTranscript, councilLite };
+    const payload = { messages: chatTranscript, councilLite, threadId: currentThreadId };
     const dk = (document.getElementById('dispatchKeyInput') && document.getElementById('dispatchKeyInput').value || '').trim();
     if (dk) payload.dispatchKey = dk;
     const result = await api('/ai/chat', {
@@ -1496,6 +1794,9 @@ async function sendChat() {
     });
     const text = result.message || JSON.stringify(result);
     chatTranscript.push({ role: 'assistant', content: text });
+    if (result.threadSaved) chatPersistence = 'kv';
+    saveChatBackup();
+    if (document.getElementById('voiceRead') && document.getElementById('voiceRead').checked) speakAssistant(text);
     const el = document.getElementById(loadId);
     if (el) el.remove();
     renderChatFromTranscript();
@@ -1540,6 +1841,8 @@ function escapeHtml(text) {
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') closeModal();
 });
+
+document.getElementById('runAuditBtn')?.addEventListener('click', () => runFullAudit());
 
 // === START ===
 init();
