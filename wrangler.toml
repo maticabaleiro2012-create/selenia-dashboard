@@ -15,22 +15,39 @@ CORE_V2_URL = "https://onbox-core-v2.soporte-a90.workers.dev"
 ONBOX_CORE_URL = "https://onbox-core.soporte-a90.workers.dev"
 # Gastronomía — solo lectura en /ops/overview (GET /health y GET /api/health)
 GASTRONOMIA_PROXY_URL = "https://logistica-gastronomica-proxy.soporte-a90.workers.dev"
-# Opcional: JSON array de probes extra para GET /ops/audit, ej. [{"id":"pages","label":"Gastro Pages","url":"https://..."}]
-# SELENIA_AUDIT_EXTRA = "[]"
+# Probes extra en GET /ops/audit (JSON array). Admin web gastronomía (Pages).
+SELENIA_AUDIT_EXTRA = '[{"id":"gastro-admin-pages","label":"Gastronomía admin (Pages)","url":"https://onbox-admin.pages.dev/"}]'
+# Disparar CI gastronomía (onbox-universe) vía workflow_dispatch — mismo GITHUB_TOKEN que repository_dispatch
+SELENIA_ACTIONS_REPO = "maticabaleiro2012-create/onbox-universe"
+SELENIA_GASTRO_WORKFLOW = "gastronomia-smoke.yml"
+SELENIA_ACTIONS_REF = "master"
 ANTHROPIC_MODEL = "claude-sonnet-4-20250514"
 # Opcional: al escribir APROBADO_SELENIA en el chat → repository_dispatch en GitHub
 GITHUB_REPO = "maticabaleiro2012-create/selenia-dashboard"
 GITHUB_DISPATCH_EVENT = "selenia_approved"
+# URL pública del Worker (probes en audit + snapshots programados). Ajustá si usás custom domain.
+SELENIA_PUBLIC_BASE = "https://selenia-command-center.soporte-a90.workers.dev"
+
+# Cron: snapshot de diagnóstico cada 30 min (ventana 12 h queda con 24 muestras).
+# Si el plan de Cloudflare no permite triggers, comentá [triggers] y `crons`.
+[triggers]
+crons = ["*/30 * * * *"]
 
 # Secrets opcionales:
 #   wrangler secret put ANTHROPIC_API_KEY
 #   wrangler secret put CORE_API_TOKEN
-#   wrangler secret put GITHUB_TOKEN          # PAT fine-grained: Contents + Metadata, o classic repo scope
+#   wrangler secret put GITHUB_TOKEN          # Contents + Actions (workflow) en onbox-universe si usás run-ci; + repo selenia para dispatch
 #   wrangler secret put SELENIA_DISPATCH_KEY    # si existe, hace falta header X-Selenia-Dispatch-Key o body.dispatchKey
 
 [[kv_namespaces]]
 binding = "SELENIA_KV"
 id = "12a388ace84e452698b0a53f6f7258e7"
+
+# D1: `npx wrangler d1 execute selenia-kb --remote --file=worker/migrations/0001_init.sql`
+[[d1_databases]]
+binding = "SELENIA_DB"
+database_name = "selenia-kb"
+database_id = "e5077329-7c41-4c13-b551-ea83be3106e8"
 
 [assets]
 directory = "public"

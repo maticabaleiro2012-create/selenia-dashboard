@@ -37,6 +37,9 @@
     --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
   }
   * { margin:0; padding:0; box-sizing:border-box; }
+  html {
+    height: 100%;
+  }
   body {
     font-family: var(--font-sans);
     font-weight: 450;
@@ -44,7 +47,13 @@
     background: var(--bg);
     background-image: radial-gradient(ellipse 80% 50% at 50% -20%, rgba(59, 130, 246, 0.06), transparent);
     color: var(--text);
-    min-height: 100vh;
+    height: 100%;
+    max-height: 100vh;
+    max-height: 100dvh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
     overflow-x: hidden;
     -webkit-font-smoothing: antialiased;
   }
@@ -57,8 +66,7 @@
     background: rgba(12, 14, 18, 0.92);
     border-bottom: 1px solid var(--border);
     box-shadow: var(--shadow-sm);
-    position: sticky;
-    top: 0;
+    flex-shrink: 0;
     z-index: 100;
     backdrop-filter: blur(12px);
   }
@@ -120,20 +128,39 @@
     border-radius: var(--radius-sm);
   }
 
-  /* === LAYOUT === */
+  /* === LAYOUT ===
+     Flex en fila (no grid): en grid la fila a veces crece al alto del contenido izquierdo
+     y el chat queda “abajo” del scroll de toda la página. */
   .main {
     position: relative;
     z-index: 1;
-    display: grid;
-    grid-template-columns: 1fr 400px;
-    gap: 0;
-    min-height: calc(100vh - 65px);
+    flex: 1 1 0;
+    min-height: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
   }
-  .content { padding: 22px 24px; overflow-y: auto; }
+  .content {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 0;
+    padding: 22px 24px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+  }
   .sidebar {
+    flex: 0 0 400px;
+    width: 400px;
+    max-width: min(400px, 42vw);
     background: var(--bg2);
     border-left: 1px solid var(--border);
-    display: flex; flex-direction: column;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    min-width: 0;
+    overflow: hidden;
   }
 
   /* === METRICS === */
@@ -282,6 +309,7 @@
   .ops-errors:empty { display: none; }
 
   .config-banner {
+    flex-shrink: 0;
     margin: 0 24px 14px;
     padding: 10px 14px;
     border-radius: var(--radius-sm);
@@ -320,6 +348,101 @@
   .ops-src-line a:hover { text-decoration: underline; }
   .ops-src-note { color: var(--hud-dim); font-family: var(--font-mono); font-size: 10px; }
   .ops-src-muted { color: var(--text2); font-size: 11px; }
+
+  /* Selenia · estado interno — tabs (Diagnóstico / Architect / Gastro) */
+  .selenia-internal-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 10px;
+  }
+  .selenia-internal-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-left: auto;
+  }
+  .selenia-tab {
+    background: transparent;
+    color: var(--text2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 4px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    letter-spacing: 0.02em;
+    transition: background 0.12s, color 0.12s, border-color 0.12s;
+  }
+  .selenia-tab:hover { color: var(--text); border-color: var(--accent2); }
+  .selenia-tab.is-active {
+    background: var(--accent2);
+    color: #06121f;
+    border-color: var(--accent2);
+  }
+  .selenia-tab-pane[hidden] { display: none !important; }
+  .selenia-tab-pane.is-active { display: block; }
+
+  /* System Architect — observabilidad (/ai/knowledge, KV, D1 insights) */
+  .architect-panel { margin-bottom: 22px; }
+  .architect-hint {
+    font-size: 11px;
+    color: var(--text2);
+    margin: 0 0 10px;
+    line-height: 1.45;
+  }
+  .architect-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+  .architect-controls .hud-label { margin: 0; }
+  .architect-meta {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .architect-meta .cell {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 8px 10px;
+    line-height: 1.4;
+    color: var(--text2);
+  }
+  .architect-meta .cell strong { color: var(--text); font-weight: 600; display: block; margin-bottom: 4px; font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .architect-meta .cell .sev-warn { color: #ffb454; font-weight: 600; }
+  .architect-meta .cell .sev-ok { color: #59d499; font-weight: 600; }
+  .architect-meta .cell .sev-error { color: #ff6b6b; font-weight: 600; }
+  #diagnosticsBody .sev-warn { color: #ffb454; }
+  #diagnosticsBody .sev-error { color: #ff6b6b; }
+  #diagnosticsBody .sev-info { color: var(--text2); }
+  #diagnosticsBody .sev-ok { color: #59d499; }
+  .architect-pre {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text2);
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 10px 12px;
+    max-height: 132px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin: 0;
+    line-height: 1.45;
+  }
+  .architect-err { font-size: 12px; color: var(--orange); line-height: 1.45; }
+  .architect-loading { font-size: 12px; color: var(--text2); }
 
   .module-matrix {
     display: grid;
@@ -450,6 +573,7 @@
 
   /* === CHAT === */
   .chat-header {
+    flex-shrink: 0;
     padding: 12px 16px;
     border-bottom: 1px solid var(--border);
     font-weight: 500;
@@ -457,7 +581,45 @@
     display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
     background: var(--bg3);
   }
-  .chat-messages { flex: 1; overflow-y: auto; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+  .sidebar .thread-row,
+  .sidebar .chat-dispatch-details,
+  .sidebar .chat-input-area {
+    flex-shrink: 0;
+  }
+  .chat-dispatch-details {
+    margin: 0 12px 6px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: rgba(18, 21, 28, 0.55);
+    font-size: 12px;
+  }
+  .chat-dispatch-summary {
+    cursor: pointer;
+    padding: 8px 12px;
+    color: var(--text2);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    list-style: none;
+    user-select: none;
+  }
+  .chat-dispatch-summary::-webkit-details-marker {
+    display: none;
+  }
+  .chat-dispatch-inner {
+    padding: 0 12px 10px;
+  }
+  .chat-messages {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
   .chat-messages::-webkit-scrollbar { width: 6px; }
   .chat-messages::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 3px; }
   .chat-msg {
@@ -483,6 +645,12 @@
     font-family: var(--font-mono);
     font-size: 10px; color: var(--text2); font-weight: 500; margin-bottom: 6px;
     letter-spacing: 0.04em; text-transform: uppercase;
+  }
+  .chat-msg.ai .chat-msg-body {
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--text);
+    word-break: break-word;
   }
   .chat-msg.system {
     align-self: center;
@@ -512,7 +680,11 @@
     font-family: var(--font-sans);
     outline: none;
     resize: none;
-    transition: border-color 0.15s, box-shadow 0.15s;
+    min-height: 44px;
+    max-height: 168px;
+    overflow-y: hidden;
+    line-height: 1.45;
+    transition: border-color 0.15s, box-shadow 0.15s, height 0.08s ease;
   }
   .chat-input:focus { border-color: var(--hud); box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2); }
   .chat-input::placeholder { color: var(--text2); opacity: 0.85; }
@@ -534,13 +706,41 @@
   .chat-send--mic:hover { background: var(--bg3); }
   .chat-send--mic.recording { outline: 2px solid var(--accent2); outline-offset: 1px; }
 
+  .chat-msg-footer {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(42, 48, 60, 0.65);
+  }
+  .chat-read-btn {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 5px 10px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: rgba(12, 14, 18, 0.55);
+    color: var(--accent2);
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s, color 0.15s;
+  }
+  .chat-read-btn:hover {
+    border-color: var(--border-bright);
+    background: var(--surface-hover);
+    color: var(--text);
+  }
+
   /* === MODAL === */
   .modal-overlay {
     position: fixed; inset: 0;
     background: rgba(6, 8, 12, 0.72);
     backdrop-filter: blur(6px);
     display: none; align-items: center; justify-content: center;
-    z-index: 200;
+    z-index: 320;
   }
   .modal-overlay.active { display: flex; }
   .modal {
@@ -579,8 +779,36 @@
   .modal .cmd-desc { font-size: 13px; color: var(--text2); margin-top: 4px; line-height: 1.4; }
 
   @media (max-width: 1100px) {
-    .main { grid-template-columns: 1fr; }
-    .sidebar { min-height: 400px; border-left: none; border-top: 1px solid var(--border); }
+    html {
+      max-height: none;
+    }
+    body {
+      height: auto;
+      max-height: none;
+      overflow-y: auto;
+      overflow-x: hidden;
+    }
+    .main {
+      flex: none;
+      flex-direction: column;
+      min-height: auto;
+      overflow: visible;
+    }
+    .content {
+      flex: none;
+      overflow: visible;
+      min-height: 0;
+    }
+    .sidebar {
+      flex: none;
+      width: 100%;
+      max-width: none;
+      min-height: min(520px, 72dvh);
+      max-height: min(640px, 78dvh);
+      border-left: none;
+      border-top: 1px solid var(--border);
+      overflow: hidden;
+    }
     .modules-grid { grid-template-columns: repeat(2, 1fr); }
     .ops-layout { grid-template-columns: 1fr; }
   }
@@ -643,6 +871,126 @@
     font-weight: 600;
     text-transform: none;
   }
+
+  /* Chat pantalla completa (cubre todo el viewport; el panel queda oculto detrás) */
+  .chat-voice-hint {
+    flex-shrink: 0;
+    margin: 0 12px 8px;
+    padding: 8px 10px;
+    font-size: 11px;
+    line-height: 1.45;
+    color: var(--text2);
+    background: rgba(24, 28, 38, 0.85);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+  }
+  .chat-voice-hint strong {
+    color: var(--text);
+    font-weight: 600;
+  }
+  .chat-nat-hint {
+    flex-shrink: 0;
+    margin: 0 12px 8px;
+    padding: 8px 10px;
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--text2);
+    background: rgba(24, 28, 38, 0.85);
+    border: 1px solid var(--accent2);
+    border-radius: var(--radius-sm);
+  }
+  .chat-nat-hint strong { color: var(--text); font-weight: 600; }
+  .chat-nat-hint em { color: var(--accent2); font-style: normal; }
+  .chat-nat-hint code { font-size: 10px; }
+  .chat-quick-actions {
+    flex-shrink: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 0 12px 8px;
+  }
+  .chat-quick-btn {
+    font-size: 11px;
+    padding: 5px 10px;
+    line-height: 1.2;
+  }
+  .chat-voice-details {
+    flex-shrink: 0;
+    margin: 0 12px 8px;
+  }
+  .chat-voice-summary {
+    cursor: pointer;
+    font-size: 11px;
+    color: var(--text2);
+    padding: 4px 0;
+    user-select: none;
+  }
+  .chat-voice-summary:hover { color: var(--text); }
+  .chat-voice-details[open] .chat-voice-hint { margin-top: 6px; margin-left: 0; margin-right: 0; }
+  .chat-open-fab {
+    position: fixed;
+    right: 14px;
+    bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+    z-index: 120;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 12px 16px;
+    border-radius: 999px;
+    border: 1px solid var(--border-bright);
+    background: linear-gradient(145deg, var(--accent), #1e40af);
+    color: #fff;
+    cursor: pointer;
+    box-shadow: var(--shadow-md);
+    font-weight: 600;
+  }
+  .chat-open-fab:hover {
+    filter: brightness(1.06);
+  }
+  body.chat-fullscreen .chat-open-fab {
+    display: none;
+  }
+  body.chat-fullscreen .header,
+  body.chat-fullscreen .config-banner,
+  body.chat-fullscreen #opsDegradedBanner {
+    display: none;
+  }
+  /* Pantalla completa: NO ocultar .main (el chat es hijo → visibility/height 0 dejaba todo negro).
+     Ocultamos solo la columna de operaciones y el chat ocupa el alto útil con flex. */
+  body.chat-fullscreen {
+    overflow: hidden !important;
+    height: 100vh !important;
+    height: 100dvh !important;
+    max-height: 100vh !important;
+    max-height: 100dvh !important;
+  }
+  body.chat-fullscreen .main {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    height: auto !important;
+    overflow: hidden !important;
+    display: flex !important;
+    flex-direction: row !important;
+    visibility: visible !important;
+  }
+  body.chat-fullscreen .main > .content {
+    display: none !important;
+  }
+  body.chat-fullscreen .sidebar {
+    position: relative !important;
+    inset: auto !important;
+    flex: 1 1 auto !important;
+    width: 100% !important;
+    max-width: none !important;
+    min-height: 0 !important;
+    height: auto !important;
+    max-height: none !important;
+    z-index: auto;
+    border-left: none !important;
+    border-top: none !important;
+    background: var(--bg2);
+  }
 </style>
 </head>
 <body>
@@ -666,6 +1014,7 @@
 </header>
 
 <div id="configBanner" class="config-banner" hidden></div>
+<div id="opsDegradedBanner" class="config-banner" hidden style="border-color:rgba(239,68,68,0.45);background:rgba(239,68,68,0.09)"></div>
 
 <!-- MAIN -->
 <div class="main">
@@ -743,12 +1092,68 @@
       </div>
     </div>
 
-    <div class="ops-panel" id="gastroOpsPanel" hidden style="margin-bottom:22px">
-      <h3>Gastronomía — chequeo proxy (solo lectura)</h3>
-      <div id="gastroOpsBody" style="font-size:12px;color:var(--text);line-height:1.5"></div>
+    <div class="ops-panel architect-panel" id="seleniaInternalPanel">
+      <div class="selenia-internal-head">
+        <h3 style="margin:0">Selenia · estado interno</h3>
+        <div class="selenia-internal-tabs" role="tablist" aria-label="Vistas internas de Selenia">
+          <button type="button" class="selenia-tab is-active" data-tab="diag" role="tab" aria-selected="true">Diagnóstico 12 h</button>
+          <button type="button" class="selenia-tab" data-tab="architect" role="tab" aria-selected="false">Architect</button>
+          <button type="button" class="selenia-tab" data-tab="gastro" role="tab" aria-selected="false" hidden>Gastronomía</button>
+        </div>
+      </div>
+
+      <section class="selenia-tab-pane is-active" id="diagnosticsPanel" data-pane="diag" role="tabpanel">
+        <p class="architect-hint">
+          Snapshots agregados (D1 en prod). Hints recurrentes + delta de pedidos y de fallas de auditoría. Cron del Worker captura cada 30 min.
+        </p>
+        <div class="architect-controls">
+          <label class="hud-label" for="diagnosticsHoursSel">Ventana</label>
+          <select class="hud-input" id="diagnosticsHoursSel" style="max-width:120px">
+            <option value="1">1 h</option>
+            <option value="6">6 h</option>
+            <option value="12" selected>12 h</option>
+            <option value="24">24 h</option>
+            <option value="48">48 h</option>
+          </select>
+          <button type="button" class="hud-btn" id="diagnosticsRefreshBtn">Refrescar</button>
+          <button type="button" class="hud-btn" id="diagnosticsSnapshotBtn">Capturar ahora</button>
+        </div>
+        <div id="diagnosticsBody" class="architect-body"><span class="architect-loading">Cargando diagnóstico…</span></div>
+      </section>
+
+      <section class="selenia-tab-pane" id="architectPanel" data-pane="architect" role="tabpanel" hidden>
+        <p class="architect-hint">
+          Trazabilidad sin depender del modelo: <code>GET /ai/knowledge</code>, <code>/ai/roadmap</code>, <code>/ai/insights</code>.
+          Si el Worker tiene <code>SELENIA_INTERNAL_KEY</code>, pegá la misma clave acá (solo en este navegador).
+        </p>
+        <div class="architect-controls">
+          <div style="display:flex;flex-direction:column;gap:4px;min-width:0;flex:1;max-width:320px">
+            <label class="hud-label" for="seleniaInternalKeyInput">Clave interna (opcional)</label>
+            <input
+              type="password"
+              class="hud-input"
+              id="seleniaInternalKeyInput"
+              placeholder="X-Selenia-Internal-Key"
+              autocomplete="off"
+              spellcheck="false"
+            />
+          </div>
+          <button type="button" class="hud-btn" id="architectRefreshBtn">Refrescar memoria</button>
+        </div>
+        <div id="architectBody" class="architect-body"><span class="architect-loading">Cargando observabilidad…</span></div>
+      </section>
+
+      <section class="selenia-tab-pane" id="gastroOpsPanel" data-pane="gastro" role="tabpanel" hidden>
+        <h4 style="margin:0 0 8px;font-size:12px;color:var(--text2);letter-spacing:.05em;text-transform:uppercase">Gastronomía — chequeo proxy (solo lectura)</h4>
+        <div id="gastroOpsBody" style="font-size:12px;color:var(--text);line-height:1.5"></div>
+      </section>
     </div>
 
     <!-- Modules -->
+    <p style="font-size:12px;color:var(--text2);margin:-8px 0 16px;line-height:1.55;max-width:720px">
+      <strong style="color:var(--text)">Negocio</strong> = verticales del panel (pedidos, logística, etc.).
+      <strong style="color:var(--text)">Plataforma</strong> = Core v2 (datos en Neon vía API), legacy onbox-core, proxies, Selenia, CI. Monitoreo agregado: <code>/ops/overview</code> + <code>/ops/audit</code>; en el chat, tools <code>get_operational_hints</code>, snapshot de pedidos y líneas por <code>orderKey</code>.
+    </p>
     <div class="section-title">Módulos de negocio</div>
     <div class="modules-grid" id="modulesGrid"></div>
 
@@ -769,27 +1174,52 @@
         <div class="logo logo--sm">S</div>
         <span class="hud-sidebar-title">Asistente</span>
       </div>
+      <button type="button" class="hud-btn" id="chatExpandBtn" aria-label="Chat en pantalla completa">Pantalla completa</button>
+      <button type="button" class="hud-btn" id="chatCollapseBtn" hidden aria-label="Volver al panel de operaciones">Ver panel</button>
       <label class="hud-label" style="display:flex;align-items:center;gap:6px;cursor:pointer;white-space:nowrap">
         <input type="checkbox" id="councilLite" checked /> Council
       </label>
-      <label class="hud-label" style="display:flex;align-items:center;gap:6px;cursor:pointer;white-space:nowrap" title="Lee en voz alta la última respuesta">
-        <input type="checkbox" id="voiceRead" /> Voz
+      <label class="hud-label" style="display:flex;align-items:center;gap:6px;cursor:pointer;white-space:nowrap" title="Trata de leer cada respuesta al llegar (Chrome a veces bloquea el audio tras la red; usá «Leer» en el mensaje). URL: ?voice=1">
+        <input type="checkbox" id="voiceRead" /> Leer en voz
       </label>
-      <button type="button" class="hud-btn" id="newChatBtn">Nuevo chat</button>
+      <button type="button" class="hud-btn" id="voiceStopBtn" title="Corta la lectura en voz (mismo efecto que Escape si está hablando)" aria-label="Detener lectura en voz">Detener</button>
+      <button type="button" class="hud-btn" id="voiceSelectionBtn" title="Marcá texto en la página con el mouse y tocá acá para leerlo en voz" aria-label="Leer en voz el texto seleccionado">Leer sel.</button>
+      <button type="button" class="hud-btn" id="newChatBtn" aria-label="Iniciar conversación nueva">Nuevo chat</button>
     </div>
+    <div class="chat-nat-hint">
+      <strong>Decile qué hacer.</strong> Ej: <em>“diagnosticá y proponé fixes”</em>, <em>“buscá pedidos sin stock”</em>, <em>“corré health-check de gastronomía”</em>. Mutaciones a Core piden <code>APROBADO_DATOS</code> en el chat; CI pide <code>APROBADO_SELENIA</code>. Lectura/diagnóstico no piden nada.
+    </div>
+    <div class="chat-quick-actions" id="chatQuickActions" role="toolbar" aria-label="Acciones rápidas para Selenia"></div>
+    <details class="chat-voice-details">
+      <summary class="chat-voice-summary">Voz / dictado</summary>
+      <div class="chat-voice-hint">
+        <strong>Voz (leer mensajes):</strong> activá <strong>Leer en voz</strong> para que intente leer cada respuesta al llegar (si Chrome no habla, usá <strong>Leer</strong> en el mensaje). <strong>Leer sel.</strong> = marcá texto y leé. <strong>Detener</strong> o Esc cortan la voz. También: <code>?voice=1</code> en la URL.
+      </div>
+    </details>
     <div id="threadRow" class="thread-row" style="padding:0 14px 8px;font-size:11px;color:var(--text2);line-height:1.45"></div>
     <div class="chat-messages" id="chatMessages"></div>
-    <div style="padding:0 14px 10px">
-      <label class="hud-label" for="dispatchKeyInput">Dispatch key (opcional)</label>
-      <input type="password" class="hud-input" id="dispatchKeyInput" autocomplete="off" placeholder="SELENIA_DISPATCH_KEY en Worker" />
-    </div>
+    <details class="chat-dispatch-details">
+      <summary class="chat-dispatch-summary">Dispatch GitHub (avanzado)</summary>
+      <div class="chat-dispatch-inner">
+        <label class="hud-label" for="dispatchKeyInput">Clave opcional</label>
+        <input
+          type="password"
+          class="hud-input"
+          id="dispatchKeyInput"
+          autocomplete="off"
+          placeholder="Igual que secret SELENIA_DISPATCH_KEY en Worker"
+        />
+      </div>
+    </details>
     <div class="chat-input-area">
-      <textarea class="chat-input" id="chatInput" rows="1" placeholder="Escribí o dictá con el mic…" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat()}"></textarea>
-      <button type="button" class="chat-send chat-send--mic" id="voiceDictateBtn" title="Dictar (navegador)">🎤</button>
-      <button class="chat-send" id="chatSend" onclick="sendChat()">→</button>
+      <textarea class="chat-input" id="chatInput" rows="1" placeholder="Escribí… (Shift+Enter salto de línea). Mic = hablar y transcribir." aria-label="Mensaje para Selenia" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat()}"></textarea>
+      <button type="button" class="chat-send chat-send--mic" id="voiceDictateBtn" title="Dictado: hablás y el texto aparece en el cuadro (Chrome/Edge)" aria-label="Dictar con el micrófono">🎤</button>
+      <button type="button" class="chat-send" id="chatSend" aria-label="Enviar mensaje" onclick="sendChat()">→</button>
     </div>
   </div>
 </div>
+
+<button type="button" id="openChatFullscreenFab" class="chat-open-fab" aria-label="Abrir chat en pantalla completa">Chat pantalla completa</button>
 
 <!-- MODULE DETAIL MODAL -->
 <div class="modal-overlay" id="moduleModal">
@@ -823,6 +1253,8 @@ const MODULE_META = {
 const COMMANDS = {
   gastronomia: [
     { name: 'health-check', desc: 'Probar GET /health y /api/health del proxy gastronómico' },
+    { name: 'run-ci', desc: 'Encolar CI en onbox-universe (PAT). Links + corridas; intenta detectar la run nueva. Payload opcional: run_smoke, worker_url' },
+    { name: 'ci-runs', desc: 'Solo lectura: últimas corridas del workflow gastronomía en GitHub (sin encolar)' },
     { name: 'listar-pedidos', desc: 'Listar pedidos (requiere gateway / API real)' },
     { name: 'nuevo-pedido', desc: 'Nuevo pedido' },
     { name: 'estado-cocina', desc: 'Estado cocina / turno' },
@@ -856,6 +1288,9 @@ const COMMANDS = {
   ],
   sistemas: [
     { name: 'health-check', desc: 'Health check de servicios' },
+    { name: 'ci-gastro', desc: 'Igual que gastronomía:run-ci (mismo workflow; links + corridas en la respuesta)' },
+    { name: 'ci-gastro-runs', desc: 'Solo lectura: mismas corridas que gastronomía:ci-runs (workflow gastro)' },
+    { name: 'actions-snapshot', desc: 'Solo lectura: últimas corridas de cualquier workflow del repo (SELENIA_ACTIONS_REPO)' },
     { name: 'deploy-preview', desc: 'Deploy a preview' },
     { name: 'deploy-produccion', desc: 'Deploy a producción' },
     { name: 'listar-workers', desc: 'Listar workers activos' },
@@ -874,12 +1309,15 @@ const COMMANDS = {
   ],
 };
 
+let architectPollTick = 0;
 let eventCount = 0;
 let pollInterval;
 let demoUptime = 0;
 let latestModules = {};
 let latestHistory = [];
 let opsOverview = null;
+let opsOverviewFailStreak = 0;
+let opsAuditProbeFailStreak = 0;
 
 function isStrictOpsOverview(ov) {
   return !!(ov && ov.contract && ov.contract !== 'demo');
@@ -901,6 +1339,36 @@ function updateConfigBanner(ov) {
   }
 }
 
+function updateOpsDegradedBanner() {
+  const el = document.getElementById('opsDegradedBanner');
+  if (!el) return;
+  if (DEMO_MODE) {
+    el.hidden = true;
+    el.innerHTML = '';
+    return;
+  }
+  const ovBad = opsOverviewFailStreak >= 2;
+  const auBad = opsAuditProbeFailStreak >= 2;
+  if (!ovBad && !auBad) {
+    el.hidden = true;
+    el.innerHTML = '';
+    return;
+  }
+  el.hidden = false;
+  const parts = [];
+  if (ovBad) {
+    parts.push(
+      '<strong>GET /ops/overview</strong> falló varias veces seguidas (red o Worker). Revisá conectividad, secrets y <code>wrangler tail</code>.'
+    );
+  }
+  if (auBad) {
+    parts.push(
+      'La <strong>auditoría HTTP</strong> reportó probes en fallo en varias corridas seguidas (o el request a <code>/ops/audit</code> falló).'
+    );
+  }
+  el.innerHTML = parts.join(' ');
+}
+
 function renderOpsSources(ov) {
   const el = document.getElementById('opsSources');
   if (!el) return;
@@ -920,11 +1388,11 @@ function renderOpsSources(ov) {
 
 // === DEMO DATA ===
 const DEMO_MODULES = {
-  gastronomia: { status: 'running', manifest: { name: 'Gastronomía OnBox', commands: ['health-check','listar-pedidos','nuevo-pedido','estado-cocina','asignar-delivery','dashboard'] } },
+  gastronomia: { status: 'running', manifest: { name: 'Gastronomía OnBox', commands: ['health-check','run-ci','ci-runs','listar-pedidos','nuevo-pedido','estado-cocina','asignar-delivery','dashboard'] } },
   logistica: { status: 'running', manifest: { name: 'Logística & Delivery', commands: ['asignar-envio','tracking','listar-drivers','optimizar-rutas','scan-paquete','dashboard'] } },
   'onbox-market': { status: 'running', manifest: { name: 'Onbox Marketplace', commands: ['listar-productos','publicar-ml','sync-stock','importar-ordenes','sync-shopify','sync-tiendanube','dashboard'] } },
   retail: { status: 'running', manifest: { name: 'Retail & Inventario', commands: ['consultar-stock','entrada-mercaderia','ajuste-inventario','alerta-stock-bajo','reporte-valorizado','dashboard'] } },
-  sistemas: { status: 'running', manifest: { name: 'Sistemas & DevOps', commands: ['health-check','deploy-preview','deploy-produccion','listar-workers','logs','dashboard'] } },
+  sistemas: { status: 'running', manifest: { name: 'Sistemas & DevOps', commands: ['health-check','ci-gastro','ci-gastro-runs','actions-snapshot','deploy-preview','deploy-produccion','listar-workers','logs','dashboard'] } },
   financiera: { status: 'running', manifest: { name: 'Financiera & Crypto', commands: ['emitir-factura','consultar-ultimo-cbte','calcular-iva','scan-oportunidades','ejecutar-arbitraje','pnl','crear-preferencia-mp','dashboard'] } },
 };
 
@@ -1001,9 +1469,234 @@ async function api(path, opts = {}) {
   const data = ct.includes('application/json') ? await res.json() : await res.text();
   if (!res.ok) {
     const detail = typeof data === 'object' && data && data.error ? data.error : `HTTP ${res.status}`;
-    throw new Error(detail);
+    const err = new Error(detail);
+    err.status = res.status;
+    if (data && typeof data === 'object') {
+      err.rateLimited = !!data.rateLimited;
+      if (typeof data.retryAfterSeconds === 'number') err.retryAfterSeconds = data.retryAfterSeconds;
+    }
+    throw err;
   }
   return data;
+}
+
+const SELENIA_INTERNAL_KEY_LS = 'selenia_internal_key_ui';
+
+function getSeleniaInternalKey() {
+  const inp = document.getElementById('seleniaInternalKeyInput');
+  const fromInput = inp && typeof inp.value === 'string' ? inp.value.trim() : '';
+  if (fromInput) return fromInput;
+  try {
+    return String(localStorage.getItem(SELENIA_INTERNAL_KEY_LS) || '').trim();
+  } catch (_) {
+    return '';
+  }
+}
+
+/** GET /ai/knowledge | /ai/roadmap | /ai/insights con header interno opcional. */
+async function apiSeleniaObs(path, opts = {}) {
+  if (DEMO_MODE) {
+    if (path === '/ai/knowledge' || path.startsWith('/ai/knowledge?')) {
+      return {
+        bundled: {
+          version: 'demo',
+          hash: '0'.repeat(64),
+          generatedAt: Date.now(),
+          sectionCount: 4,
+          charCount: 4000,
+        },
+        bundledExcerpt: '## Modo demo\nSin Worker: bundle curado no disponible.',
+        kvKb: null,
+        kvRoadmap: null,
+        authRequired: false,
+      };
+    }
+    if (path.startsWith('/ai/roadmap')) {
+      return { kvRoadmap: null, bundledMeta: { version: 'demo', hash: '0', sectionCount: 4 }, authRequired: false };
+    }
+    if (path.startsWith('/ai/insights')) {
+      return { rows: [], note: 'demo' };
+    }
+    if (path.startsWith('/ai/diagnostics')) {
+      return {
+        hours: 12,
+        sampleCount: 0,
+        report: { ok: true, window: 'empty', message: 'Modo demo: sin Worker.' },
+        recent: [],
+      };
+    }
+  }
+  const k = getSeleniaInternalKey();
+  const headers = { Accept: 'application/json', ...(opts.headers || {}) };
+  if (k) headers['X-Selenia-Internal-Key'] = k;
+  const res = await fetch(`${API}${path}`, { ...opts, headers });
+  const ct = res.headers.get('content-type') || '';
+  const data = ct.includes('application/json') ? await res.json() : await res.text();
+  if (!res.ok) {
+    const detail = typeof data === 'object' && data && data.error ? data.error : `HTTP ${res.status}`;
+    const err = new Error(detail);
+    err.status = res.status;
+    throw err;
+  }
+  return data;
+}
+
+function jsonPreviewLen(obj) {
+  if (obj == null) return 'vacío';
+  try {
+    const s = JSON.stringify(obj);
+    return `${s.length} caracteres JSON`;
+  } catch (_) {
+    return 'dato';
+  }
+}
+
+async function refreshArchitectPanel() {
+  const body = document.getElementById('architectBody');
+  if (!body) return;
+  body.innerHTML = '<span class="architect-loading">Actualizando observabilidad…</span>';
+  try {
+    const [know, roadmap, insPend, insProm] = await Promise.all([
+      apiSeleniaObs('/ai/knowledge'),
+      apiSeleniaObs('/ai/roadmap'),
+      apiSeleniaObs('/ai/insights?status=pending'),
+      apiSeleniaObs('/ai/insights?status=promoted'),
+    ]);
+    const b = know.bundled || {};
+    const hash = String(b.hash || '');
+    const hashShort = hash.length > 10 ? `${hash.slice(0, 8)}…` : hash || '—';
+    const nPend = Array.isArray(insPend.rows) ? insPend.rows.length : 0;
+    const nProm = Array.isArray(insProm.rows) ? insProm.rows.length : 0;
+    const authReq = !!know.authRequired;
+    const excerpt = String(know.bundledExcerpt || '').slice(0, 1200);
+    body.innerHTML = `
+      <div class="architect-meta">
+        <div class="cell"><strong>Bundle</strong>v${escapeHtml(String(b.version || '—'))} · ${escapeHtml(String(b.sectionCount ?? '—'))} secciones · ${escapeHtml(String(b.charCount ?? '—'))} chars</div>
+        <div class="cell"><strong>SHA256</strong>${escapeHtml(hashShort)}</div>
+        <div class="cell"><strong>KV KB</strong>${escapeHtml(jsonPreviewLen(know.kvKb))}</div>
+        <div class="cell"><strong>KV roadmap</strong>${escapeHtml(jsonPreviewLen(roadmap.kvRoadmap))}</div>
+        <div class="cell"><strong>Insights D1</strong>${nPend} pending · ${nProm} promoted</div>
+        <div class="cell"><strong>Auth API</strong>${authReq ? 'header requerido' : 'abierto'}</div>
+      </div>
+      <div style="font-size:10px;color:var(--text2);margin-bottom:6px">Vista previa excerpt (bundle, truncado UI)</div>
+      <pre class="architect-pre">${escapeHtml(excerpt)}${excerpt.length >= 1200 ? '\n…' : ''}</pre>
+    `;
+  } catch (e) {
+    const st = e.status;
+    if (st === 401) {
+      body.innerHTML =
+        '<div class="architect-err">401 — Sin autorización. Si el Worker tiene <code>SELENIA_INTERNAL_KEY</code>, pegá la clave arriba y tocá «Refrescar memoria».</div>';
+      return;
+    }
+    body.innerHTML = `<div class="architect-err">${escapeHtml(e.message || String(e))}</div>`;
+  }
+}
+
+function fmtDeltaCell(label, value) {
+  const num = Number(value);
+  const isNum = Number.isFinite(num);
+  const sign = isNum && num > 0 ? '+' : '';
+  const cls = isNum && num > 0 ? 'sev-warn' : isNum && num < 0 ? 'sev-ok' : '';
+  const txt = isNum ? `${sign}${num}` : '—';
+  return `<div class="cell"><strong>${escapeHtml(label)}</strong><span class="${cls}">${escapeHtml(txt)}</span></div>`;
+}
+
+function fmtNumCell(label, value) {
+  const num = Number(value);
+  const txt = Number.isFinite(num) ? String(num) : (value == null ? '—' : String(value));
+  return `<div class="cell"><strong>${escapeHtml(label)}</strong>${escapeHtml(txt)}</div>`;
+}
+
+async function refreshDiagnosticsPanel() {
+  const body = document.getElementById('diagnosticsBody');
+  if (!body) return;
+  const sel = document.getElementById('diagnosticsHoursSel');
+  const hours = Math.min(72, Math.max(1, Number(sel?.value) || 12));
+  body.innerHTML = '<span class="architect-loading">Actualizando diagnóstico…</span>';
+  try {
+    const res = await apiSeleniaObs(`/ai/diagnostics?hours=${hours}`);
+    const r = res.report || {};
+    const samples = res.sampleCount ?? 0;
+    if (!samples || r.window === 'empty') {
+      body.innerHTML =
+        '<div class="architect-meta">' +
+          fmtNumCell('Ventana', `${hours} h`) +
+          fmtNumCell('Muestras', samples) +
+        '</div>' +
+        `<div class="ops-src-muted">${escapeHtml(r.message || 'Sin snapshots todavía. Tocá «Capturar ahora» o esperá al cron.')}</div>`;
+      return;
+    }
+    const d = r.delta || {};
+    const hints = Array.isArray(r.recurring_hints) ? r.recurring_hints.slice(0, 8) : [];
+    const steps = Array.isArray(r.suggested_next_steps) ? r.suggested_next_steps : [];
+    const fromTs = r.window?.from ? new Date(r.window.from).toLocaleTimeString() : '—';
+    const toTs = r.window?.to ? new Date(r.window.to).toLocaleTimeString() : '—';
+    body.innerHTML = `
+      <div class="architect-meta">
+        ${fmtNumCell('Ventana', `${hours} h (${fromTs} → ${toTs})`)}
+        ${fmtNumCell('Muestras', samples)}
+        ${fmtDeltaCell('Δ orders monitor', d.orders_in_monitor)}
+        ${fmtDeltaCell('Δ audit fail', d.audit_fail_delta)}
+        ${fmtNumCell('Inv. onbox (now)', d.inventory_onbox_units_now)}
+        ${fmtNumCell('Inv. fulfillment (now)', d.inventory_fulfillment_units_now)}
+      </div>
+      <div style="font-size:10px;color:var(--text2);margin:8px 0 4px">Hints recurrentes</div>
+      ${hints.length
+        ? `<ul style="margin:0 0 8px 18px;padding:0;font-size:11px;line-height:1.45">${hints
+            .map(
+              (h) =>
+                `<li><code>${escapeHtml(String(h.code || '—'))}</code> · <span class="sev-${escapeHtml(String(h.severity || 'info'))}">${escapeHtml(String(h.severity || 'info'))}</span> · ${escapeHtml(String(h.detail || ''))}</li>`
+            )
+            .join('')}</ul>`
+        : '<div class="ops-src-muted">Sin hints recurrentes en la ventana.</div>'}
+      ${steps.length
+        ? `<div style="font-size:10px;color:var(--text2);margin:8px 0 4px">Próximos pasos sugeridos</div>` +
+          `<ul style="margin:0 0 4px 18px;padding:0;font-size:11px;line-height:1.45">${steps
+            .map((s) => `<li>${escapeHtml(String(s))}</li>`)
+            .join('')}</ul>`
+        : ''}
+      <div class="ops-src-muted" style="margin-top:8px">Política: sin auto-fix silencioso. Mutaciones a Core requieren <code>APROBADO_DATOS</code> en el chat.</div>
+    `;
+  } catch (e) {
+    if (e.status === 401) {
+      body.innerHTML =
+        '<div class="architect-err">401 — Sin autorización. Si el Worker tiene <code>SELENIA_INTERNAL_KEY</code>, pegá la clave arriba (en System Architect) y volvé a tocar Refrescar.</div>';
+      return;
+    }
+    if (e.status === 503) {
+      body.innerHTML =
+        '<div class="architect-err">503 — D1 no configurado. Aplicá la migración <code>0002_diagnostic_snapshot.sql</code> y deployá.</div>';
+      return;
+    }
+    body.innerHTML = `<div class="architect-err">${escapeHtml(e.message || String(e))}</div>`;
+  }
+}
+
+async function triggerDiagnosticSnapshot() {
+  const btn = document.getElementById('diagnosticsSnapshotBtn');
+  const original = btn ? btn.textContent : '';
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Capturando…';
+  }
+  try {
+    await apiSeleniaObs('/ai/diagnostics/snapshot', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    await refreshDiagnosticsPanel();
+  } catch (e) {
+    const body = document.getElementById('diagnosticsBody');
+    if (body) {
+      body.innerHTML = `<div class="architect-err">No se pudo capturar: ${escapeHtml(e.message || String(e))}</div>`;
+    }
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = original || 'Capturar ahora';
+    }
+  }
 }
 
 function saveChatBackup() {
@@ -1151,22 +1844,248 @@ function setupVoiceDictation() {
   dictationRec = rec;
 }
 
+function stripMarkdownForSpeech(raw) {
+  if (!raw || typeof raw !== 'string') return '';
+  let s = raw;
+  s = s.replace(/```[\s\S]*?```/g, ' ');
+  s = s.replace(/`([^`]*)`/g, '$1');
+  s = s.replace(/\*\*([^*]+)\*\*/g, '$1');
+  s = s.replace(/\*([^*]+)\*/g, '$1');
+  s = s.replace(/^#{1,6}\s+/gm, '');
+  s = s.replace(/\n{2,}/g, '\n');
+  try {
+    s = s.replace(/\p{Extended_Pictographic}/gu, ' ');
+  } catch (_) {
+    s = s.replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, ' ');
+  }
+  return s.replace(/\s+/g, ' ').trim();
+}
+
+/** Se recalcula cuando el navegador emite `voiceschanged` (voces a veces llegan async). */
+let cachedPreferredSpanishVoice = undefined;
+
+function scoreSpanishTtsVoice(v) {
+  if (!v || !v.lang || !/^es/i.test(v.lang)) return -1e9;
+  const n = String(v.name || '').toLowerCase();
+  const lang = String(v.lang || '').toLowerCase();
+  let score = 0;
+  if (lang === 'es-ar' || /\bes[-_]ar\b/i.test(n)) score += 6;
+  else if (/^es-es|^es-mx|^es-co|^es-uy|^es-cl|^es-pe|^es-/i.test(lang)) score += 2;
+  else if (lang === 'es') score += 1;
+  const femaleHints = [
+    'sabina',
+    'helena',
+    'laura',
+    'elvira',
+    'paloma',
+    'conchita',
+    'ines',
+    'sofia',
+    'esmeralda',
+    'paulina',
+    'monica',
+    'mónica',
+    'soledad',
+    'female',
+    'femenina',
+    'woman',
+    'mujer',
+    'maria',
+    'maría',
+  ];
+  const maleHints = ['pablo', 'jorge', 'diego', 'carlos', 'antonio', 'alvaro', 'male', 'masculino', 'manuel', 'david'];
+  if (femaleHints.some((h) => n.includes(h))) score += 40;
+  if (maleHints.some((h) => n.includes(h))) score -= 35;
+  if (/neural|natural|premium|online|enhanced/i.test(n)) score += 12;
+  if (v.default && score >= 0) score += 1;
+  return score;
+}
+
+function getPreferredSpanishVoice() {
+  if (!window.speechSynthesis) return null;
+  if (cachedPreferredSpanishVoice !== undefined) return cachedPreferredSpanishVoice;
+  const vs = window.speechSynthesis.getVoices();
+  if (!vs || !vs.length) return null;
+  let best = null;
+  let bestScore = -1e9;
+  for (let i = 0; i < vs.length; i++) {
+    const v = vs[i];
+    const sc = scoreSpanishTtsVoice(v);
+    if (sc > bestScore) {
+      bestScore = sc;
+      best = v;
+    }
+  }
+  if (bestScore < -1e8) {
+    best =
+      vs.find((v) => v.lang && /^es(-|$)/i.test(v.lang) && (v.localService || v.default)) ||
+      vs.find((v) => v.lang && /^es(-|$)/i.test(v.lang)) ||
+      null;
+  }
+  cachedPreferredSpanishVoice = best || null;
+  return cachedPreferredSpanishVoice;
+}
+
+/** Llamalo desde un clic (p. ej. botón «Leer»): el navegador suele exigir gesto del usuario para hablar. */
 function speakAssistant(text) {
   if (!text || !window.speechSynthesis) return;
+  const plain = stripMarkdownForSpeech(text);
+  if (!plain) return;
   try {
     window.speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text);
+    const u = new SpeechSynthesisUtterance(plain);
     u.lang = 'es-AR';
+    const voice = getPreferredSpanishVoice();
+    if (voice) u.voice = voice;
+    u.volume = 1;
+    u.rate = 0.94;
+    u.pitch = 1;
     window.speechSynthesis.speak(u);
   } catch (_) {}
 }
 
+/** Tras respuesta de red: algunos navegadores bloquean TTS; probamos encolar en el siguiente frame. */
+function scheduleSpeakAssistantAfterResponse(text) {
+  if (!text || !window.speechSynthesis) return;
+  const run = () => speakAssistant(text);
+  try {
+    requestAnimationFrame(() => requestAnimationFrame(run));
+  } catch (_) {
+    setTimeout(run, 0);
+  }
+}
+
+function stopAssistantSpeech() {
+  if (!window.speechSynthesis) return;
+  try {
+    window.speechSynthesis.cancel();
+  } catch (_) {}
+}
+
+/** Lee el texto seleccionado en la ventana (gesto de clic en el botón). */
+function speakAssistantFromSelection() {
+  let raw = '';
+  try {
+    raw = String((window.getSelection() && window.getSelection().toString()) || '').trim();
+  } catch (_) {
+    raw = '';
+  }
+  if (!raw) {
+    const box = document.getElementById('chatMessages');
+    if (!box) return;
+    const tip = document.createElement('div');
+    tip.className = 'chat-msg system';
+    tip.style.fontSize = '11px';
+    tip.textContent =
+      'No hay texto seleccionado. Marcá un fragmento con el mouse (en el chat o en otro panel) y tocá otra vez «Leer sel.».';
+    box.appendChild(tip);
+    box.scrollTop = box.scrollHeight;
+    setTimeout(() => {
+      try {
+        tip.remove();
+      } catch (_) {}
+    }, 5200);
+    return;
+  }
+  const clipped = raw.length > 14000 ? raw.slice(0, 14000) : raw;
+  speakAssistant(clipped);
+}
+
+function wireChatVoiceToolbar() {
+  document.getElementById('voiceStopBtn')?.addEventListener('click', stopAssistantSpeech);
+  document.getElementById('voiceSelectionBtn')?.addEventListener('click', speakAssistantFromSelection);
+}
+
+function syncChatInputHeight() {
+  const ta = document.getElementById('chatInput');
+  if (!ta) return;
+  const maxH = 168;
+  ta.style.height = 'auto';
+  const next = Math.min(Math.max(44, ta.scrollHeight), maxH);
+  ta.style.height = `${next}px`;
+  ta.style.overflowY = ta.scrollHeight > maxH ? 'auto' : 'hidden';
+}
+
+function wireChatInputAutoResize() {
+  const ta = document.getElementById('chatInput');
+  if (!ta) return;
+  ta.addEventListener('input', syncChatInputHeight);
+  syncChatInputHeight();
+}
+
+function updateChatFullscreenChrome() {
+  const on = document.body.classList.contains('chat-fullscreen');
+  const ex = document.getElementById('chatExpandBtn');
+  const cl = document.getElementById('chatCollapseBtn');
+  if (ex) ex.hidden = !!on;
+  if (cl) cl.hidden = !on;
+}
+
+function setChatFullscreen(on, persist = true) {
+  document.body.classList.toggle('chat-fullscreen', !!on);
+  if (persist) {
+    try {
+      localStorage.setItem('selenia_chat_fs', on ? '1' : '0');
+    } catch (_) {}
+  }
+  updateChatFullscreenChrome();
+}
+
+function applyChatFullscreenPreference() {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('fullchat') === '1') {
+    setChatFullscreen(true, true);
+    return;
+  }
+  try {
+    const v = localStorage.getItem('selenia_chat_fs');
+    if (v === '1') {
+      setChatFullscreen(true, true);
+      return;
+    }
+    if (v === '0') {
+      setChatFullscreen(false, true);
+      return;
+    }
+  } catch (_) {}
+  if (window.matchMedia && window.matchMedia('(max-width: 900px)').matches) {
+    setChatFullscreen(true, false);
+  }
+}
+
+function wireChatFullscreenUi() {
+  document.getElementById('chatExpandBtn')?.addEventListener('click', () => setChatFullscreen(true, true));
+  document.getElementById('chatCollapseBtn')?.addEventListener('click', () => setChatFullscreen(false, true));
+  document.getElementById('openChatFullscreenFab')?.addEventListener('click', () => setChatFullscreen(true, true));
+}
+
 // === INIT ===
 async function init() {
+  try {
+    const saved = localStorage.getItem(SELENIA_INTERNAL_KEY_LS);
+    const inp = document.getElementById('seleniaInternalKeyInput');
+    if (inp && saved) inp.value = saved;
+  } catch (_) {}
   renderChatFromTranscript();
   await ensureThread();
+  applyChatFullscreenPreference();
+  updateChatFullscreenChrome();
   renderChatFromTranscript();
   setupVoiceDictation();
+  wireChatVoiceToolbar();
+  wireChatInputAutoResize();
+  wireChatFullscreenUi();
+  if (window.speechSynthesis) {
+    try {
+      window.speechSynthesis.getVoices();
+    } catch (_) {}
+    window.speechSynthesis.addEventListener('voiceschanged', () => {
+      cachedPreferredSpanishVoice = undefined;
+      try {
+        window.speechSynthesis.getVoices();
+      } catch (_) {}
+    });
+  }
   try {
     await refreshStatus();
     await refreshEvents();
@@ -1207,7 +2126,17 @@ async function init() {
 async function refreshStatus() {
   const health = await api('/health');
   const stats = await api('/events/stats');
-  opsOverview = await api('/ops/overview').catch(() => null);
+  let overviewFailed = false;
+  try {
+    opsOverview = await api('/ops/overview');
+  } catch (_) {
+    opsOverview = null;
+    overviewFailed = true;
+  }
+  if (!DEMO_MODE) {
+    if (overviewFailed) opsOverviewFailStreak = Math.min(30, opsOverviewFailStreak + 1);
+    else opsOverviewFailStreak = 0;
+  }
 
   // Uptime
   const secs = Math.floor(health.uptime);
@@ -1278,7 +2207,13 @@ async function refreshStatus() {
   renderModuleMatrix(mods, latestHistory, opsOverview);
   renderOpsPanels(mods, latestHistory, opsOverview);
   updateConfigBanner(opsOverview);
+  updateOpsDegradedBanner();
   renderOpsSources(opsOverview);
+  architectPollTick += 1;
+  if (architectPollTick === 1 || architectPollTick % 15 === 0) {
+    void refreshArchitectPanel();
+    void refreshDiagnosticsPanel();
+  }
 }
 
 // === RENDER MODULES ===
@@ -1440,8 +2375,19 @@ async function runFullAudit() {
       )
       .join('');
     const notes = (data.notes || []).map((n) => `<div style="color:var(--orange);margin-top:4px">${escapeHtml(n)}</div>`).join('');
+    const total = Number(s.total ?? 0);
+    const fail = Number(s.fail ?? 0);
+    if (!DEMO_MODE) {
+      if (total > 0 && fail > 0) opsAuditProbeFailStreak = Math.min(30, opsAuditProbeFailStreak + 1);
+      else opsAuditProbeFailStreak = 0;
+      updateOpsDegradedBanner();
+    }
     box.innerHTML = `<div style="margin-bottom:6px"><strong>Resumen:</strong> ${s.ok ?? '—'} OK / ${s.fail ?? '—'} fallan (${s.total ?? '—'} probes)</div><table style="width:100%;border-collapse:collapse;font-size:11px"><thead><tr><th align="left">Servicio</th><th>OK</th><th>HTTP</th><th>Lat</th><th>Snippet</th><th></th></tr></thead><tbody>${rows}</tbody></table>${notes}`;
   } catch (e) {
+    if (!DEMO_MODE) {
+      opsAuditProbeFailStreak = Math.min(30, opsAuditProbeFailStreak + 1);
+      updateOpsDegradedBanner();
+    }
     box.innerHTML = `<span style="color:var(--red)">${escapeHtml(e.message)}</span>`;
   }
 }
@@ -1449,14 +2395,15 @@ async function runFullAudit() {
 function renderGastroOps(overview) {
   const panel = document.getElementById('gastroOpsPanel');
   const body = document.getElementById('gastroOpsBody');
+  const tabBtn = document.querySelector('.selenia-tab[data-tab="gastro"]');
   if (!panel || !body) return;
   const g = overview && overview.gastronomia;
   if (!g || !Array.isArray(g.probes) || !g.probes.length) {
-    panel.hidden = true;
+    if (tabBtn) tabBtn.hidden = true;
     body.innerHTML = '';
     return;
   }
-  panel.hidden = false;
+  if (tabBtn) tabBtn.hidden = false;
   const lines = g.probes.map((p) => {
     const st = p.ok ? '✓' : '✗';
     const cls = p.ok ? 'var(--green)' : 'var(--red)';
@@ -1716,10 +2663,74 @@ async function runCommand(moduleId, action) {
       method: 'POST',
       body: JSON.stringify({ action, payload: {} }),
     });
+    let extras = '';
+    if (result && result.triggeredRun) {
+      const tr = result.triggeredRun;
+      const href = escapeHtml(tr.html_url || '#');
+      const st = escapeHtml(`${tr.status || ''}${tr.conclusion ? ` (${tr.conclusion})` : ''}`);
+      extras += `<div style="margin-bottom:10px;padding:10px;border:1px solid var(--green);border-radius:8px;background:rgba(34,197,94,0.08);font-size:13px"><strong>Run detectada como la de este dispatch</strong> — <a href="${href}" target="_blank" rel="noopener noreferrer">#${tr.id}</a> <span style="color:var(--text2)">${st}</span></div>`;
+    }
+    if (result && result.links) {
+      const L = result.links;
+      const parts = [];
+      if (L.workflow) {
+        parts.push(
+          `<a href="${escapeHtml(L.workflow)}" target="_blank" rel="noopener noreferrer">Workflow en GitHub</a>`
+        );
+      }
+      if (L.actions) {
+        parts.push(
+          `<a href="${escapeHtml(L.actions)}" target="_blank" rel="noopener noreferrer">Actions del repo</a>`
+        );
+      }
+      if (parts.length) {
+        extras += `<div style="margin:10px 0 6px;font-size:13px;line-height:1.65">${parts.join(' · ')}</div>`;
+      }
+    }
+    if (result && Array.isArray(result.recentRuns) && result.recentRuns.length) {
+      const hint = result.recentRunsHint ? `${escapeHtml(result.recentRunsHint)}<br>` : '';
+      const rows = result.recentRuns
+        .slice(0, 8)
+        .map((r) => {
+          const href = escapeHtml(r.html_url || '#');
+          const st = escapeHtml(`${r.status || ''}${r.conclusion ? ` (${r.conclusion})` : ''}`);
+          return `<div style="margin:4px 0;font-size:12px"><a href="${href}" target="_blank" rel="noopener noreferrer">Run #${r.id}</a> <span style="color:var(--text2)">${st}</span></div>`;
+        })
+        .join('');
+      extras += `<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);font-size:12px;color:var(--text2)">${hint}</div><div>${rows}</div>`;
+    }
+    if (result && Array.isArray(result.recentRepoRuns) && result.recentRepoRuns.length) {
+      const rows = result.recentRepoRuns
+        .slice(0, 8)
+        .map((r) => {
+          const href = escapeHtml(r.html_url || '#');
+          const title = escapeHtml(r.display_title || r.name || String(r.id));
+          const wp = escapeHtml(r.workflow_path || '');
+          const st = escapeHtml(`${r.status || ''}${r.conclusion ? ` (${r.conclusion})` : ''}`);
+          return `<div style="margin:4px 0;font-size:12px"><a href="${href}" target="_blank" rel="noopener noreferrer">#${r.id}</a> <span style="color:var(--text2)">${title}</span> <code style="font-size:10px">${wp}</code> <span style="color:var(--text2)">${st}</span></div>`;
+        })
+        .join('');
+      extras += `<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);font-size:11px;color:var(--text2)">Repo — últimas corridas (todos los workflows)</div><div>${rows}</div>`;
+    }
+    if (result && result.recentRunsError) {
+      const d = escapeHtml(String(result.recentRunsError.detail || '').slice(0, 240));
+      extras += `<div style="margin-top:10px;font-size:12px;color:var(--orange)">No se listaron corridas (HTTP ${Number(
+        result.recentRunsError.httpStatus
+      )}). ${d}</div>`;
+    }
+    const refreshRunsActions = ['run-ci', 'ci-gastro', 'ci-runs', 'ci-gastro-runs'];
+    if (result && result.links && refreshRunsActions.indexOf(action) !== -1) {
+      const refreshAct = moduleId === 'sistemas' ? 'ci-gastro-runs' : 'ci-runs';
+      extras += `<div style="margin-top:10px"><button type="button" class="hud-btn" onclick="runCommand('${moduleId}','${refreshAct}')">Actualizar corridas (sin disparar CI)</button></div>`;
+    }
+    if (result && result.links && action === 'actions-snapshot') {
+      extras += `<div style="margin-top:10px"><button type="button" class="hud-btn" onclick="runCommand('sistemas','actions-snapshot')">Actualizar snapshot Actions</button></div>`;
+    }
     resultDiv.innerHTML = `
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px;margin-top:8px">
         <div style="font-size:11px;color:var(--green);margin-bottom:6px;font-weight:600">Respuesta</div>
-        <pre style="font-size:12px;color:var(--text);white-space:pre-wrap;font-family:var(--font-mono),monospace">${JSON.stringify(result, null, 2)}</pre>
+        ${extras}
+        <pre style="font-size:12px;color:var(--text);white-space:pre-wrap;font-family:var(--font-mono),monospace;margin-top:8px">${JSON.stringify(result, null, 2)}</pre>
       </div>
     `;
     refreshEvents();
@@ -1732,13 +2743,25 @@ async function runCommand(moduleId, action) {
 function renderChatFromTranscript() {
   const msgs = document.getElementById('chatMessages');
   const lines = [
-    '<div class="chat-msg system">Selenia lista. Mismo hilo en otra PC: <strong>Copiar URL</strong> o abrí con <code>?thread=…</code>. Dictado: micrófono. Cambios riesgosos: <strong>APROBADO_SELENIA</strong>.</div>',
+    '<div class="chat-msg system"><strong>Chat pantalla completa</strong>: arriba <strong>Pantalla completa</strong> o el botón flotante <strong>Chat pantalla completa</strong> (abajo a la derecha). <strong>Voz</strong>: «Leer en voz» + botón <strong>Leer</strong> por mensaje; <kbd>Esc</kbd> cierra el chat completo o corta la voz. Hilo: <strong>Copiar URL</strong> / <code>?thread=…</code> · <code>?fullchat=1</code>. <strong>APROBADO_SELENIA</strong> para cambios riesgosos.</div>',
   ];
-  for (const m of chatTranscript) {
+  for (let i = 0; i < chatTranscript.length; i++) {
+    const m = chatTranscript[i];
     if (m.role === 'user') lines.push(`<div class="chat-msg user">${escapeHtml(m.content)}</div>`);
-    else lines.push(`<div class="chat-msg ai"><div class="sender">Selenia</div>${formatAiResponse(m.content)}</div>`);
+    else {
+      lines.push(
+        `<div class="chat-msg ai"><div class="sender">Selenia</div><div class="chat-msg-body">${formatAiResponse(m.content)}</div><div class="chat-msg-footer"><button type="button" class="chat-read-btn" data-read-idx="${i}" aria-label="Leer esta respuesta en voz">Leer</button></div></div>`
+      );
+    }
   }
   msgs.innerHTML = lines.join('');
+  msgs.querySelectorAll('.chat-read-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const idx = Number(btn.getAttribute('data-read-idx'));
+      const m = chatTranscript[idx];
+      if (m && m.role === 'assistant' && m.content) speakAssistant(m.content);
+    });
+  });
   msgs.scrollTop = msgs.scrollHeight;
 }
 
@@ -1766,12 +2789,53 @@ async function resetChat() {
 
 document.getElementById('newChatBtn').addEventListener('click', () => resetChat());
 
+/** Resumen del /ops/overview actual para que el modelo no invente ni repita el tablero a ciegas. */
+function buildDashboardContextForChat(ov) {
+  if (!ov || typeof ov !== 'object') return null;
+  const mods = Array.isArray(ov.modules)
+    ? ov.modules.map((m) => ({
+        id: m.id,
+        name: m.name,
+        status: m.status,
+        slo: m.slo,
+        latencyP95: m.latencyP95,
+        errors5m: m.errors5m,
+        event5m: m.event5m,
+      }))
+    : [];
+  const gastro = ov.gastronomia
+    ? {
+        mainOk: ov.gastronomia.mainOk,
+        probes: (ov.gastronomia.probes || []).map((p) => ({
+          path: p.path,
+          ok: p.ok,
+          status: p.status,
+        })),
+      }
+    : undefined;
+  return {
+    generatedAt: ov.generatedAt || Date.now(),
+    summary: ov.summary || null,
+    incidents: (Array.isArray(ov.incidents) ? ov.incidents : []).slice(0, 14).map((i) => ({
+      id: i.id,
+      title: i.title,
+      severity: i.severity,
+      owner: i.owner,
+    })),
+    services: Array.isArray(ov.services) ? ov.services.slice(0, 8) : undefined,
+    modules: mods,
+    gastro,
+    errors: (Array.isArray(ov.errors) ? ov.errors : []).slice(0, 10),
+  };
+}
+
 async function sendChat() {
   const input = document.getElementById('chatInput');
   const msg = input.value.trim();
   if (!msg) return;
 
   input.value = '';
+  syncChatInputHeight();
   chatTranscript.push({ role: 'user', content: msg });
   renderChatFromTranscript();
 
@@ -1786,6 +2850,8 @@ async function sendChat() {
 
   try {
     const payload = { messages: chatTranscript, councilLite, threadId: currentThreadId };
+    const snap = buildDashboardContextForChat(opsOverview);
+    if (snap) payload.dashboardContext = snap;
     const dk = (document.getElementById('dispatchKeyInput') && document.getElementById('dispatchKeyInput').value || '').trim();
     if (dk) payload.dispatchKey = dk;
     const result = await api('/ai/chat', {
@@ -1796,7 +2862,9 @@ async function sendChat() {
     chatTranscript.push({ role: 'assistant', content: text });
     if (result.threadSaved) chatPersistence = 'kv';
     saveChatBackup();
-    if (document.getElementById('voiceRead') && document.getElementById('voiceRead').checked) speakAssistant(text);
+    if (document.getElementById('voiceRead') && document.getElementById('voiceRead').checked) {
+      scheduleSpeakAssistantAfterResponse(text);
+    }
     const el = document.getElementById(loadId);
     if (el) el.remove();
     renderChatFromTranscript();
@@ -1816,7 +2884,42 @@ async function sendChat() {
     if (el) el.remove();
     renderChatFromTranscript();
     const box = document.getElementById('chatMessages');
-    box.innerHTML += `<div class="chat-msg ai"><div class="sender">Selenia</div><span style="color:var(--red)">Error: ${escapeHtml(e.message)}. Corré \`npm start\` o \`npm run cf:dev\` y configurá ANTHROPIC_API_KEY (ver .env.example / wrangler secret).</span></div>`;
+    if (e.rateLimited || e.status === 429) {
+      const seconds = Math.max(15, Math.min(120, Number(e.retryAfterSeconds) || 60));
+      const msgId = 'rl-' + Date.now();
+      box.innerHTML +=
+        `<div class="chat-msg ai" id="${msgId}"><div class="sender">Selenia</div>` +
+        `<div style="color:var(--orange);line-height:1.5">⏳ <strong>Rate limit de Anthropic</strong> (30 000 tokens/min en tu organización).<br>` +
+        `Esperá <span class="rl-counter" data-seconds="${seconds}">${seconds}</span> s y volvé a tirar el mismo prompt, o partilo en piezas más chicas (un quick-action a la vez).<br>` +
+        `<button type="button" class="hud-btn" style="margin-top:6px" id="${msgId}-retry" disabled>Reintentar (${seconds}s)</button></div></div>`;
+      box.scrollTop = box.scrollHeight;
+      const retryBtn = document.getElementById(msgId + '-retry');
+      const counterEl = document.querySelector(`#${msgId} .rl-counter`);
+      let remaining = seconds;
+      const lastUserMsg = chatTranscript.length ? chatTranscript[chatTranscript.length - 1] : null;
+      const tick = setInterval(() => {
+        remaining -= 1;
+        if (counterEl) counterEl.textContent = String(Math.max(0, remaining));
+        if (retryBtn && remaining > 0) retryBtn.textContent = `Reintentar (${remaining}s)`;
+        if (remaining <= 0) {
+          clearInterval(tick);
+          if (retryBtn) {
+            retryBtn.disabled = false;
+            retryBtn.textContent = 'Reintentar ahora';
+            retryBtn.onclick = () => {
+              const ta = document.getElementById('chatInput');
+              if (ta && lastUserMsg && lastUserMsg.role === 'user') {
+                ta.value = lastUserMsg.content;
+                ta.dispatchEvent(new Event('input', { bubbles: true }));
+                try { sendChat(); } catch (_) {}
+              }
+            };
+          }
+        }
+      }, 1000);
+    } else {
+      box.innerHTML += `<div class="chat-msg ai"><div class="sender">Selenia</div><span style="color:var(--red)">Error: ${escapeHtml(e.message)}.</span></div>`;
+    }
     box.scrollTop = box.scrollHeight;
   }
 
@@ -1824,11 +2927,13 @@ async function sendChat() {
   msgs.scrollTop = msgs.scrollHeight;
 }
 
+/** Markdown muy liviano para UI; siempre escapar HTML primero (evita XSS si el modelo devuelve tags). */
 function formatAiResponse(text) {
-  return text
-    .replace(/\n/g, '<br>')
+  const safe = escapeHtml(text == null ? '' : String(text));
+  return safe
+    .replace(/\r\n|\r|\n/g, '<br>')
     .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-    .replace(/`(.*?)`/g, '<code style="background:var(--surface);padding:2px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px;font-family:var(--font-mono),monospace;color:var(--accent2)">$1</code>');
+    .replace(/`([^`]*?)`/g, '<code style="background:var(--surface);padding:2px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px;font-family:var(--font-mono),monospace;color:var(--accent2)">$1</code>');
 }
 
 function escapeHtml(text) {
@@ -1839,10 +2944,110 @@ function escapeHtml(text) {
 
 // === KEYBOARD ===
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') closeModal();
+  if (e.key === 'Escape') {
+    const modal = document.getElementById('moduleModal');
+    if (modal && modal.classList.contains('active')) {
+      closeModal();
+      e.preventDefault();
+      return;
+    }
+    if (window.speechSynthesis && window.speechSynthesis.speaking) {
+      stopAssistantSpeech();
+      e.preventDefault();
+      return;
+    }
+    if (document.body.classList.contains('chat-fullscreen')) {
+      setChatFullscreen(false, true);
+      e.preventDefault();
+      return;
+    }
+    closeModal();
+  }
 });
 
 document.getElementById('runAuditBtn')?.addEventListener('click', () => runFullAudit());
+function activateSeleniaTab(tabId) {
+  const tabs = document.querySelectorAll('.selenia-tab');
+  const panes = document.querySelectorAll('.selenia-tab-pane');
+  tabs.forEach((t) => {
+    const active = t.getAttribute('data-tab') === tabId;
+    t.classList.toggle('is-active', active);
+    t.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+  panes.forEach((p) => {
+    const active = p.getAttribute('data-pane') === tabId;
+    p.classList.toggle('is-active', active);
+    p.hidden = !active;
+  });
+}
+document.querySelectorAll('.selenia-tab').forEach((btn) => {
+  btn.addEventListener('click', () => activateSeleniaTab(btn.getAttribute('data-tab') || 'diag'));
+});
+
+const QUICK_ACTIONS = [
+  {
+    id: 'diag',
+    label: '🩺 Diagnosticá ahora',
+    prompt:
+      'Invocá run_system_diagnostic con hours=12 y devolveme un resumen corto: estado general, deltas relevantes y los próximos pasos sugeridos. Si hay hints recurrentes, listalos.',
+  },
+  {
+    id: 'audit',
+    label: '📋 Auditá todo',
+    prompt:
+      'Invocá get_ops_audit y get_ops_overview. Devolveme una sola línea con FAILS=N (summary.fail) y luego el desglose por probe que falla, con sugerencia concreta para cada uno.',
+  },
+  {
+    id: 'orders',
+    label: '📦 Pedidos sin stock',
+    prompt:
+      'Invocá get_orders_snapshot (limit 30) y get_operational_hints. Identificá pedidos en monitor cuyo orderKey podría no tener stock y proponeme cuáles revisar con get_order_lines. No mutes nada.',
+  },
+  {
+    id: 'roadmap',
+    label: '🛣️ Roadmap',
+    prompt:
+      'Mostrame el estado del roadmap (get_roadmap si existe, si no leé /ai/roadmap) y los insights pending. Sugerí 3 próximos pasos concretos priorizados.',
+  },
+];
+
+function renderChatQuickActions() {
+  const host = document.getElementById('chatQuickActions');
+  if (!host) return;
+  host.innerHTML = QUICK_ACTIONS.map(
+    (a) =>
+      `<button type="button" class="hud-btn chat-quick-btn" data-quick="${escapeHtml(a.id)}" title="${escapeHtml(a.prompt)}">${escapeHtml(a.label)}</button>`
+  ).join('');
+  host.querySelectorAll('.chat-quick-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const id = btn.getAttribute('data-quick');
+      const action = QUICK_ACTIONS.find((x) => x.id === id);
+      if (!action) return;
+      const ta = document.getElementById('chatInput');
+      if (ta) {
+        ta.value = action.prompt;
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      try { sendChat(); } catch (_) {}
+    });
+  });
+}
+
+document.getElementById('architectRefreshBtn')?.addEventListener('click', () => refreshArchitectPanel());
+document.getElementById('diagnosticsRefreshBtn')?.addEventListener('click', () => refreshDiagnosticsPanel());
+document.getElementById('diagnosticsSnapshotBtn')?.addEventListener('click', () => triggerDiagnosticSnapshot());
+document.getElementById('diagnosticsHoursSel')?.addEventListener('change', () => refreshDiagnosticsPanel());
+document.getElementById('seleniaInternalKeyInput')?.addEventListener('change', () => {
+  try {
+    const v = (document.getElementById('seleniaInternalKeyInput')?.value || '').trim();
+    if (v) localStorage.setItem(SELENIA_INTERNAL_KEY_LS, v);
+    else localStorage.removeItem(SELENIA_INTERNAL_KEY_LS);
+  } catch (_) {}
+  refreshArchitectPanel();
+  refreshDiagnosticsPanel();
+});
+
+renderChatQuickActions();
 
 // === START ===
 init();

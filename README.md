@@ -34,6 +34,19 @@ npm run cf:dev
 
 Archivos: `worker/src/index.js` (API), `public/index.html` (UI), `wrangler.toml`.
 
+### Contexto curado + bundle (System Architect)
+
+- **Fuente de verdad en Git**: [`docs/architecture/`](docs/architecture/) — ecosistema, pedidos, incidentes, roadmap humano. Owner: equipo Sistemas (PR + review).
+- **Artefacto embebido**: `npm run build:context` genera [`worker/src/generated/context-bundle.json`](worker/src/generated/context-bundle.json) (hash + versión). Se ejecuta en **predeploy** al hacer `npm run deploy` y en CI antes de `wrangler deploy`.
+- **Runtime**: el bloque *Contexto OnBox (curado)* se inyecta en el system prompt (`worker/src/context.js`, `prompts.js`). Herramienta **`get_architecture_doc`** devuelve secciones del bundle.
+- **KV + observabilidad**: claves `selenia:kb:main` y `selenia:roadmap:main`. **GET** [`/ai/knowledge`](worker/src/index.js), [`/ai/roadmap`](worker/src/index.js), [`/ai/insights`](worker/src/index.js) — si configurás `SELENIA_INTERNAL_KEY` (Worker: `wrangler secret put SELENIA_INTERNAL_KEY`), enviá header **`X-Selenia-Internal-Key`**. **POST** [`/ai/knowledge/merge`](worker/src/index.js) mergea JSON en KV (mismo header si aplica).
+- **D1** (Worker): binding `SELENIA_DB` en `wrangler.toml`; migración inicial `worker/migrations/0001_init.sql`. Aplicar remoto: `npx wrangler d1 execute SELENIA_DB --remote --file=worker/migrations/0001_init.sql`. Tools **`list_pending_insights`** y **`query_d1_tables`**.
+- **Insights con human-in-the-loop**: **POST** `/ai/insights` crea fila `pending`; **POST** `/ai/insights/:id/promote` con body `{ "confirm": "APROBADO_MEMORIA" }` + header interno si corresponde.
+- **Datos Core v2 (Neon vía API, no SQL libre)**: en el chat, la tool `core_v2_inventory_write` hace `POST` a `/inventory/stock/apply` o `/inventory/stock/reverse` solo si el usuario escribió **`APROBADO_DATOS`** en el historial. Requiere `CORE_API_TOKEN` en el Worker. Otras tools de lectura: `get_operational_hints`, `get_orders_snapshot`, `get_order_lines`. Detalle: [`docs/architecture/06-selenia-neon-y-datos.md`](docs/architecture/06-selenia-neon-y-datos.md).
+- **Snapshot a docs (PR)**: workflow [`onbox-universe/.github/workflows/selenia-insights-snapshot.yml`](../../.github/workflows/selenia-insights-snapshot.yml) (manual) corre [`scripts/snapshot-promoted-insights.mjs`](scripts/snapshot-promoted-insights.mjs) y abre PR con `docs/architecture/05-insights-promoted.md`. Requiere secrets `SELENIA_BASE` y opcionalmente `SELENIA_INTERNAL_KEY`.
+- **Paridad local**: `server.js` expone los mismos paths; KV e insights en memoria; D1 solo en Cloudflare.
+- **UI**: en `public/index.html`, bloque **System Architect — contexto & memoria** muestra bundle (versión/hash), KV y conteos D1 (insights pending/promoted); clave interna opcional guardada en `localStorage` (`selenia_internal_key_ui`).
+
 ## Node local
 
 ```bash

@@ -21,6 +21,7 @@ jobs:
           node-version: '20'
           cache: npm
       - run: npm ci
+      - run: npm run build:context
       - name: Wrangler
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

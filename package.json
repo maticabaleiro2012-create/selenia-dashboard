@@ -4,11 +4,14 @@
   "private": true,
   "description": "Selenia Command Center — static UI + local API (Claude / Anthropic)",
   "scripts": {
+    "build:context": "node scripts/build-context-bundle.mjs",
+    "predeploy": "npm run build:context",
     "start": "node server.js",
     "dev": "node --watch server.js",
     "cf:dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "open": "node scripts/selenia-open.cjs"
+    "open": "node scripts/selenia-open.cjs",
+    "test:e2e": "node scripts/e2e-selenia.mjs"
   },
   "engines": {
     "node": ">=18"
