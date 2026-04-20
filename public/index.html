@@ -2392,6 +2392,38 @@ async function runFullAudit() {
   }
 }
 
+function renderGastroKpis(summary) {
+  if (!summary) return '';
+  const cells = [
+    { label: 'Cadetes online', value: summary.cadetesOnline, source: summary.sources?.cadetes_online, hint: 'con GPS reciente (últ. 2 min)' },
+    { label: 'Onboarding pendiente', value: summary.onboardingPending, source: summary.sources?.onboarding_pending, hint: 'requests esperando aprobación' },
+    { label: 'Alertas préstamos', value: summary.loanAlerts, source: summary.sources?.loan_alerts, hint: 'vencidos o por vencer <7d' },
+  ];
+  const cellsHtml = cells.map((c) => {
+    const isNum = typeof c.value === 'number';
+    const display = isNum ? String(c.value) : '—';
+    const err = c.source && String(c.source).startsWith('err:');
+    const noConfig = c.source === 'neon_not_configured';
+    let subtitle = escapeHtml(c.hint);
+    let color = 'var(--text)';
+    if (err) { subtitle = 'error obteniendo'; color = 'var(--red)'; }
+    else if (noConfig) { subtitle = 'no configurado'; color = 'var(--text2)'; }
+    else if (isNum && c.value > 0) { color = 'var(--accent)'; }
+    return `<div style="flex:1;min-width:110px;padding:10px 12px;background:var(--bg1);border:1px solid var(--border);border-radius:8px">
+      <div style="font-size:10px;color:var(--text2);letter-spacing:.04em;text-transform:uppercase;margin-bottom:4px">${escapeHtml(c.label)}</div>
+      <div style="font-size:20px;font-weight:700;color:${color};line-height:1.1">${escapeHtml(display)}</div>
+      <div style="font-size:10px;color:var(--text2);margin-top:2px">${subtitle}</div>
+    </div>`;
+  }).join('');
+  const cacheBadge = summary.cache
+    ? ` <span style="font-size:10px;color:var(--text2);padding:1px 6px;border:1px solid var(--border);border-radius:10px;margin-left:6px">cache ${escapeHtml(summary.cache.toLowerCase())}</span>`
+    : '';
+  const ageSec = summary.fetchedAt ? Math.round((Date.now() - summary.fetchedAt) / 1000) : null;
+  const ageLabel = ageSec != null ? `hace ${ageSec}s` : '';
+  return `<div style="margin:4px 0 10px;font-size:11px;color:var(--text2)">KPIs /ops/summary <span style="color:var(--text2)">${escapeHtml(ageLabel)}</span>${cacheBadge}</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">${cellsHtml}</div>`;
+}
+
 function renderGastroOps(overview) {
   const panel = document.getElementById('gastroOpsPanel');
   const body = document.getElementById('gastroOpsBody');
@@ -2415,6 +2447,7 @@ function renderGastroOps(overview) {
     : '<div style="margin-top:8px;color:var(--orange)">/health no OK: revisá el proxy o variables.</div>';
   body.innerHTML =
     `<div style="color:var(--text2);font-size:11px;margin-bottom:6px">Base: <code>${escapeHtml(g.proxyBase || '')}</code></div>` +
+    renderGastroKpis(g.summary) +
     lines.join('') +
     note;
 }

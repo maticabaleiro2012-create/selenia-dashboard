@@ -269,7 +269,29 @@ async function fetchGastronomiaDiagnostics(env) {
   }
   const mainProbe = probes.find((p) => p.path === '/health');
   const mainOk = !!(mainProbe && mainProbe.ok);
-  return { proxyBase, probes, mainOk };
+
+  // Best-effort: traer /ops/summary (contadores agregados anónimos, sin PII).
+  // Si falla o no existe, el resto del flujo queda intacto.
+  let summary = null;
+  try {
+    const sres = await fetch(`${proxyBase}/ops/summary`, { method: 'GET' });
+    if (sres.ok) {
+      const sjson = await sres.json();
+      if (sjson && sjson.ok !== false) {
+        summary = {
+          fetchedAt: Date.now(),
+          cache: sres.headers.get('x-cache') || null,
+          cadetesOnline: sjson.cadetes_online_count ?? null,
+          onboardingPending: sjson.onboarding_pending_count ?? null,
+          loanAlerts: sjson.loan_alerts_count ?? null,
+          sources: sjson.sources || null,
+          serverNow: sjson.now || null,
+        };
+      }
+    }
+  } catch { /* best-effort */ }
+
+  return { proxyBase, probes, mainOk, summary };
 }
 
 function mergeGastronomiaIntoOpsPayload(payload, gastro, pushErr, now) {
@@ -277,6 +299,7 @@ function mergeGastronomiaIntoOpsPayload(payload, gastro, pushErr, now) {
     proxyBase: gastro.proxyBase,
     probes: gastro.probes,
     mainOk: gastro.mainOk,
+    summary: gastro.summary || null,
   };
   const apiP = (gastro.probes || []).find((p) => p.path === '/api/health');
   if (!gastro.mainOk) {
