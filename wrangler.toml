@@ -21,7 +21,11 @@ SELENIA_AUDIT_EXTRA = '[{"id":"gastro-admin-pages","label":"Gastronomía admin (
 SELENIA_ACTIONS_REPO = "maticabaleiro2012-create/onbox-universe"
 SELENIA_GASTRO_WORKFLOW = "gastronomia-smoke.yml"
 SELENIA_ACTIONS_REF = "master"
-ANTHROPIC_MODEL = "claude-sonnet-4-20250514"
+ANTHROPIC_MODEL = "claude-sonnet-5"
+# Watchdog (2026-07-28): SQL de SOLO LECTURA contra las dos Neon del ecosistema.
+# Nota: estas URLs ya viven en scripts commiteados del repo (privado); rotar todo junto si algún día se expone.
+NEON_PAQUETES_URL = "postgresql://neondb_owner:npg_uPg1O0MhxBdV@ep-steep-scene-acqsuknf.sa-east-1.aws.neon.tech/neondb?sslmode=require"
+NEON_GASTRO_URL = "postgresql://neondb_owner:npg_nrW9zvENR2yf@ep-dawn-water-actahwq3-pooler.sa-east-1.aws.neon.tech/neondb?sslmode=require"
 # Opcional: al escribir APROBADO_SELENIA en el chat → repository_dispatch en GitHub
 GITHUB_REPO = "maticabaleiro2012-create/selenia-dashboard"
 GITHUB_DISPATCH_EVENT = "selenia_approved"

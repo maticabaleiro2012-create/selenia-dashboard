@@ -6,6 +6,7 @@ import {
   captureAndStoreDiagnosticSnapshot,
   listDiagnosticSnapshots,
 } from './diagnostics.js';
+import { runWatchdog, getWatchdogFindings, getWatchdogSummary, watchdogContextBlock } from './watchdog.js';
 
 /**
  * Selenia on Cloudflare Workers:
@@ -1018,13 +1019,15 @@ async function anthropicChatMessages(env, messages, councilLite, dashboardContex
     ci: transcriptHasHumanApproval(messages),
     data: transcriptHasDataApproval(messages),
   };
+  // El chat SIEMPRE ve los hallazgos abiertos del vigilante (estado real del sistema).
+  const watchdogBlock = await watchdogContextBlock(env);
   return anthropicChatWithTools({
     apiKey: env.ANTHROPIC_API_KEY,
     model: env.ANTHROPIC_MODEL || 'claude-sonnet-4-20250514',
     councilLite: councilLite !== false,
     dashboardContext,
     messages,
-    curatedContextAppend: getCuratedContextAppend(3500),
+    curatedContextAppend: getCuratedContextAppend(3500) + watchdogBlock,
     executeTool: (toolName, toolInput) => executeWorkerTool(env, requestUrl, approvals, toolName, toolInput),
   });
 }
@@ -1375,6 +1378,21 @@ async function handleApi(request, env) {
     );
   }
 
+  // ── Watchdog: vigilancia activa de todos los sistemas (2026-07-28) ────────
+  if (method === 'GET' && pathname === '/watchdog/findings') {
+    const body = await getWatchdogFindings(env);
+    return json(body, body.ok ? 200 : 503, corsHeaders());
+  }
+  if (method === 'GET' && pathname === '/watchdog/summary') {
+    const body = await getWatchdogSummary(env);
+    return json(body, body.ok ? 200 : 503, corsHeaders());
+  }
+  if (method === 'POST' && pathname === '/watchdog/run') {
+    const body = await runWatchdog(env, 'manual');
+    pushEvent('watchdog.run', body);
+    return json(body, body.ok ? 200 : 503, corsHeaders());
+  }
+
   if (method === 'GET' && pathname === '/ai/knowledge') {
     if (!internalKeyOk(request, env)) return json({ error: 'unauthorized' }, 401, corsHeaders());
     const payload = {
@@ -1635,6 +1653,7 @@ function isApiPath(pathname) {
   if (pathname.startsWith('/ai/')) return true;
   if (pathname.startsWith('/modules/') && pathname.endsWith('/command')) return true;
   if (pathname === '/connectors/health') return true;
+  if (pathname.startsWith('/watchdog/')) return true;
   return false;
 }
 
@@ -1664,6 +1683,13 @@ export default {
       pushEvent('diagnostic.snapshot.cron', { cron: event.cron, ok: true });
     } catch (e) {
       pushEvent('diagnostic.snapshot.cron', { ok: false, error: String(e.message || e) });
+    }
+    // Vigilante: cada corrida del cron revisa TODOS los sistemas (workers + datos).
+    try {
+      const r = await runWatchdog(env, 'cron');
+      pushEvent('watchdog.cron', r);
+    } catch (e) {
+      pushEvent('watchdog.cron', { ok: false, error: String(e.message || e) });
     }
   },
 };
