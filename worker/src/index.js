@@ -7,6 +7,7 @@ import {
   listDiagnosticSnapshots,
 } from './diagnostics.js';
 import { runWatchdog, getWatchdogFindings, getWatchdogSummary, watchdogContextBlock } from './watchdog.js';
+import { seleniaSessionUser, seleniaLogin, seleniaLogout, loginPage } from './auth.js';
 
 /**
  * Selenia on Cloudflare Workers:
@@ -1661,6 +1662,35 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const pathname = url.pathname;
+
+    // ═══════════════════════════════════════════════════════════════════
+    // 🔴 PUERTA (2026-08-05). Antes esto estaba ABIERTO a internet: con la
+    // URL cualquiera veía el estado de todos los sistemas, los hallazgos del
+    // vigilante y podía hablar con el agente. Y el repo es público, así que
+    // la URL nunca fue un secreto.
+    // Se valida contra el MISMO login del admin (no hay usuarios duplicados).
+    // ═══════════════════════════════════════════════════════════════════
+    if (pathname === '/selenia/login' && request.method === 'POST') return seleniaLogin(request, env);
+    if (pathname === '/selenia/logout' && request.method === 'POST') return seleniaLogout(request, env);
+
+    // Excepciones deliberadas:
+    //  · OPTIONS: preflight de CORS, no expone nada.
+    //  · /health: lo usan las sondas de disponibilidad (y el propio audit).
+    //  · X-Selenia-Internal-Key: llamadas worker→worker ya autenticadas por secret.
+    const _internalKey = String(env.SELENIA_INTERNAL_KEY || '').trim();
+    const _traeInternal = _internalKey && (request.headers.get('x-selenia-internal-key') || '').trim() === _internalKey;
+    const _libre = request.method === 'OPTIONS' || pathname === '/health' || _traeInternal;
+
+    if (!_libre) {
+      const _u = await seleniaSessionUser(request, env);
+      if (!_u) {
+        // A la API se le contesta JSON; al navegador, la pantalla de login.
+        if (isApiPath(pathname)) {
+          return json({ ok: false, error: 'no_autenticado', detail: 'Entrá con tu usuario del admin.' }, 401, corsHeaders());
+        }
+        return loginPage();
+      }
+    }
 
     if (isApiPath(pathname) || request.method === 'OPTIONS') {
       return handleApi(request, env);

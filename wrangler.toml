@@ -23,9 +23,16 @@ SELENIA_GASTRO_WORKFLOW = "gastronomia-smoke.yml"
 SELENIA_ACTIONS_REF = "master"
 ANTHROPIC_MODEL = "claude-sonnet-5"
 # Watchdog (2026-07-28): SQL de SOLO LECTURA contra las dos Neon del ecosistema.
-# Nota: estas URLs ya viven en scripts commiteados del repo (privado); rotar todo junto si algún día se expone.
-NEON_PAQUETES_URL = "postgresql://neondb_owner:npg_uPg1O0MhxBdV@ep-steep-scene-acqsuknf.sa-east-1.aws.neon.tech/neondb?sslmode=require"
-NEON_GASTRO_URL = "postgresql://neondb_owner:npg_nrW9zvENR2yf@ep-dawn-water-actahwq3-pooler.sa-east-1.aws.neon.tech/neondb?sslmode=require"
+# 🔴 2026-08-05: NEON_PAQUETES_URL y NEON_GASTRO_URL SALIERON de acá. Estaban en
+# [vars], o sea EN TEXTO PLANO en un archivo versionado, y este repo es PÚBLICO:
+# las contraseñas de las dos bases de producción quedaron expuestas en internet.
+# Ahora van como secrets (no se versionan, no se pueden leer de vuelta):
+#   npx wrangler secret put NEON_PAQUETES_URL
+#   npx wrangler secret put NEON_GASTRO_URL
+# ⚠️ Sacarlas de acá NO las borra del historial de git: hay que ROTAR las dos
+# contraseñas en Neon igual.
+# URL del panel de administración — contra este login valida la puerta de Selenia.
+ADMIN_URL = "https://onbox-admin.soporte-a90.workers.dev"
 # Opcional: al escribir APROBADO_SELENIA en el chat → repository_dispatch en GitHub
 GITHUB_REPO = "maticabaleiro2012-create/selenia-dashboard"
 GITHUB_DISPATCH_EVENT = "selenia_approved"
@@ -56,3 +63,9 @@ database_id = "e5077329-7c41-4c13-b551-ea83be3106e8"
 [assets]
 directory = "public"
 binding = "ASSETS"
+# 🔴 2026-08-05: SIN esto Cloudflare sirve los archivos estáticos ANTES de
+# ejecutar el Worker, así que la puerta de login NUNCA corría para la UI: la API
+# quedaba cerrada pero el panel entero se veía igual entrando por la raíz.
+# Con run_worker_first el Worker atiende todo y decide; los assets se sirven
+# desde adentro con env.ASSETS.fetch una vez validada la sesión.
+run_worker_first = true
