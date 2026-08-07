@@ -6,7 +6,7 @@ import {
   captureAndStoreDiagnosticSnapshot,
   listDiagnosticSnapshots,
 } from './diagnostics.js';
-import { runWatchdog, getWatchdogFindings, getWatchdogSummary, watchdogContextBlock } from './watchdog.js';
+import { runWatchdog, getWatchdogFindings, getWatchdogSummary, watchdogContextBlock, probeWorkers } from './watchdog.js';
 import { seleniaSessionUser, seleniaLogin, seleniaLogout, loginPage } from './auth.js';
 
 /**
@@ -1387,6 +1387,12 @@ async function handleApi(request, env) {
   if (method === 'GET' && pathname === '/watchdog/summary') {
     const body = await getWatchdogSummary(env);
     return json(body, body.ok ? 200 : 503, corsHeaders());
+  }
+  // Estado en vivo de los 8 workers, uno por uno. El panel del admin lo usa
+  // para mostrar lo que ANDA, no solo lo que se rompió.
+  if (method === 'GET' && pathname === '/watchdog/workers') {
+    const body = await probeWorkers();
+    return json(body, 200, corsHeaders());
   }
   if (method === 'POST' && pathname === '/watchdog/run') {
     const body = await runWatchdog(env, 'manual');

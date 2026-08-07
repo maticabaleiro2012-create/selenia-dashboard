@@ -52,6 +52,34 @@ const WORKERS = [
   { id: 'gastro', label: 'logistica-gastronomica-proxy', url: 'https://logistica-gastronomica-proxy.soporte-a90.workers.dev/health' },
 ];
 
+/**
+ * Estado EN VIVO de los 8 workers, uno por uno (no solo los que fallan).
+ * checkWorkers() devuelve findings, o sea únicamente lo roto; para el panel
+ * hace falta ver también lo que está bien, si no un tablero vacío es
+ * indistinguible de un vigilante que no corrió.
+ */
+export async function probeWorkers() {
+  const filas = await Promise.all(WORKERS.map(async (w) => {
+    const t0 = Date.now();
+    try {
+      const r = await fetch(w.url, { method: 'GET', signal: AbortSignal.timeout(10000) });
+      const ms = Date.now() - t0;
+      const estado = r.status >= 500 ? 'down' : (ms > 8000 ? 'slow' : 'ok');
+      return { id: w.id, label: w.label, url: w.url, estado, http: r.status, ms };
+    } catch (e) {
+      return { id: w.id, label: w.label, url: w.url, estado: 'down', http: 0, ms: Date.now() - t0, error: String(e?.message || e).slice(0, 120) };
+    }
+  }));
+  return {
+    ok: true,
+    ts: new Date().toISOString(),
+    workers: filas,
+    total: filas.length,
+    caidos: filas.filter((f) => f.estado === 'down').length,
+    lentos: filas.filter((f) => f.estado === 'slow').length,
+  };
+}
+
 async function checkWorkers() {
   const out = [];
   await Promise.all(WORKERS.map(async (w) => {
