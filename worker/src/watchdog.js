@@ -111,10 +111,67 @@ function paquetesChecks() {
       query: `SELECT count(*)::int n FROM orders WHERE (fields->>'Fecha de venta') IS NOT NULL AND (fields->>'Fecha de venta')::date > '${hoy}'::date AND created_at > now() - interval '7 days'`,
     },
     {
+      // 2026-08-07: sin la comisión cargada, la rentabilidad de esa venta es
+      // una mentira (se ve la plata que entró pero no lo que ML se llevó).
+      // El detalle muestra la cobertura de CADA costo para saber dónde está
+      // el agujero: comisión, cuotas, impuestos y bonificaciones.
+      id: 'ml_ventas_sin_costos', severity: 'warn',
+      title: (n) => n + ' venta(s) de Mercado Libre de 7 días SIN la comisión cargada',
+      detail: 'La rentabilidad de esas ventas está inflada: se ve lo que entró pero no lo que ML se llevó.',
+      detailFrom: (f) => {
+        const tot = Number(f.total) || 0;
+        const pct = (x) => tot ? Math.round((Number(x) || 0) * 100 / tot) + '%' : '—';
+        return 'Cobertura sobre ' + tot + ' ventas ML de 7 días — comisión ' + pct(f.con_com)
+          + ' · cuotas ' + pct(f.con_cuo) + ' · impuestos ' + pct(f.con_imp)
+          + ' · bonificaciones ' + pct(f.con_bon)
+          + '. Sin comisión la rentabilidad sale inflada.';
+      },
+      query: `SELECT
+                count(*)::int                                   AS total,
+                count(*) FILTER (WHERE com IS NULL)::int         AS n,
+                count(*) FILTER (WHERE com IS NOT NULL)::int     AS con_com,
+                count(*) FILTER (WHERE cuo IS NOT NULL)::int     AS con_cuo,
+                count(*) FILTER (WHERE imp IS NOT NULL)::int     AS con_imp,
+                count(*) FILTER (WHERE bon IS NOT NULL)::int     AS con_bon
+              FROM (
+                SELECT nullif(o.fields->>'Comisión de venta','')      AS com,
+                       nullif(o.fields->>'Cuotas ML','')              AS cuo,
+                       nullif(o.fields->>'Impuestos (total)','')      AS imp,
+                       nullif(o.fields->>'Bonificaciones (total)','') AS bon
+                  FROM orders o
+                 WHERE o.created_at > now() - interval '7 days'
+                   AND o.fields->>'Origen/Plataforma' = 'Mercado Libre'
+                   AND COALESCE(o.fields->>'Estado','') NOT IN ('Cancelado','Anulado')
+                   AND COALESCE(o.fields->>'Monto','0') ~ '^-?[0-9]+([.][0-9]+)?$'
+                   AND (o.fields->>'Monto')::numeric > 0
+              ) t`,
+    },
+    {
+      // 2026-08-07: este check contaba TAMBIÉN los Flex, y en Flex el paquete
+      // no pasa por nuestro depósito: no tenemos ni necesitamos el detalle de
+      // productos. Contarlos era ruido que tapaba los casos que sí importan.
+      // Los Flex se siguen contando aparte, en el detalle: no se esconde nada.
       id: 'pedidos_sin_lineas', severity: 'warn',
-      title: (n) => n + ' pedido(s) CON DUEÑO de las últimas 72h sin líneas de producto',
+      title: (n) => n + ' pedido(s) NO Flex de las últimas 72h sin líneas de producto',
       detail: 'Pedidos reales (con seller y pedido_id) que facturarían sin detalle. Causa histórica: token vencido / DLQ applyfail.',
-      query: `SELECT count(*)::int n FROM orders o WHERE o.created_at > now() - interval '72 hours' AND o.seller_id IS NOT NULL AND o.pedido_id IS NOT NULL AND COALESCE(o.fields->>'Estado','') NOT IN ('Cancelado','Anulado') AND NOT EXISTS (SELECT 1 FROM order_lines l WHERE l.order_external_id IN (o.order_external_id, o.unified_id, o.pedido_id, regexp_replace(COALESCE(o.order_external_id,''), '^(meli|tn|shopify|full):', '')) OR l.ml_order_id = o.pedido_id)`,
+      detailFrom: (f) => 'Pedidos reales (con seller y pedido_id) que facturarían sin detalle. Causa histórica: token vencido / DLQ applyfail.'
+        + ' — Flex sin líneas en el mismo período: ' + (Number(f.flex) || 0) + ' (esperado: el paquete no pasa por nuestro depósito).',
+      query: `SELECT
+                count(*) FILTER (WHERE NOT es_flex)::int AS n,
+                count(*) FILTER (WHERE es_flex)::int     AS flex
+              FROM (
+                SELECT upper(COALESCE(o.fields->>'Tipo de envío2', o.fields->>'Tipo de envio', o.tipo_envio, '')) LIKE '%FLEX%'
+                    OR upper(COALESCE(o.fields->>'Tipo de envío2', o.fields->>'Tipo de envio', o.tipo_envio, '')) LIKE '%SELF_SERVICE%' AS es_flex
+                  FROM orders o
+                 WHERE o.created_at > now() - interval '72 hours'
+                   AND o.seller_id IS NOT NULL AND o.pedido_id IS NOT NULL
+                   AND COALESCE(o.fields->>'Estado','') NOT IN ('Cancelado','Anulado')
+                   AND NOT EXISTS (
+                        SELECT 1 FROM order_lines l
+                         WHERE l.order_external_id IN (o.order_external_id, o.unified_id, o.pedido_id,
+                               regexp_replace(COALESCE(o.order_external_id,''), '^(meli|tn|shopify|full):', ''))
+                            OR l.ml_order_id = o.pedido_id)
+              ) t`,
     },
     {
       id: 'ventas_sin_dueno', severity: 'info',
@@ -179,9 +236,13 @@ async function runSqlChecks(connStr, checks, system) {
   for (const c of checks) {
     try {
       const rows = await neonSql(connStr, c.query);
-      const n = Number(rows && rows[0] && rows[0].n) || 0;
+      const fila = (rows && rows[0]) || {};
+      const n = Number(fila.n) || 0;
       if (n > 0 || (c.id === 'volumen_anomalo' && n !== 0)) {
-        out.push({ checkId: c.id, system, severity: c.severity, title: c.title(n), detail: c.detail, count: Math.abs(n) });
+        // Un check puede devolver columnas extra para explicar el número: es
+        // preferible a un finding que dice "134" y te deja adivinando.
+        const detalle = typeof c.detailFrom === 'function' ? c.detailFrom(fila) : c.detail;
+        out.push({ checkId: c.id, system, severity: c.severity, title: c.title(n), detail: detalle, count: Math.abs(n) });
       }
     } catch (e) {
       out.push({ checkId: 'check_error:' + c.id, system, severity: 'info', title: 'El check "' + c.id + '" no pudo correr', detail: String(e.message || e).slice(0, 180) + ' — revisar nombre de tabla/columna en watchdog.js', count: 1 });
