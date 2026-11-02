@@ -198,6 +198,36 @@ function paquetesChecks() {
       query: `SELECT count(*)::int n FROM wa_outbox WHERE status IN ('pendiente','pendiente_token','aprobado') AND created_at < now() - interval '24 hours'`,
     },
     {
+      // 🔴 2026-08-13 (pedido de Mati: "instrumentá la app de cadetes que
+      // lleguen alertas"). Hasta hoy, cuando la app del cadete se caía no
+      // quedaba NINGÚN rastro: el chofer avisaba por WhatsApp y de este lado se
+      // adivinaba. Ahora la app reporta a `app_errors` y Selenia lo vigila.
+      // Umbral 10 en 1h: por debajo de eso suele ser un celular con mala señal
+      // o un caso aislado; arriba, algo se rompió para todos.
+      id: 'apps_errores_pico', severity: 'critical',
+      title: (n) => n + ' error(es) de las apps en la última hora',
+      detail: 'Pico de errores reportados por las apps (app_errors). Ver cuál app y qué pantalla: si se concentran en una sola pantalla, ahí está el bug.',
+      detailFrom: (f) => 'Última hora: ' + (f.n || 0) + ' errores · apps: ' + (f.apps || '—') + ' · pantallas: ' + (f.pantallas || '—'),
+      query: `SELECT count(*)::int n,
+                     string_agg(DISTINCT app, ', ') apps,
+                     string_agg(DISTINCT NULLIF(pantalla,''), ', ') pantallas
+                FROM app_errors
+               WHERE ocurrido_at > now() - interval '1 hour'
+              HAVING count(*) >= 10`,
+    },
+    {
+      // Un MISMO error repitiéndose es más grave que muchos distintos: significa
+      // que hay un camino roto que la gente está pisando una y otra vez.
+      id: 'apps_error_repetido', severity: 'warn',
+      title: (n) => 'Un mismo error de app se repitió ' + n + ' veces en 24h',
+      detail: 'Mismo mensaje una y otra vez = camino roto, no mala suerte. Mirar app_errors agrupado por mensaje.',
+      query: `SELECT COALESCE(MAX(c),0)::int n FROM (
+                SELECT count(*)::int c FROM app_errors
+                 WHERE ocurrido_at > now() - interval '24 hours'
+                 GROUP BY app, left(mensaje, 120)
+                HAVING count(*) >= 5) t`,
+    },
+    {
       id: 'volumen_anomalo', severity: 'warn',
       title: (n) => 'Volumen de pedidos de AYER inusual (desvío ' + n + '%)',
       detail: 'Ayer vs promedio del mismo día de semana (4 semanas previas). >±45% = revisar: caída de ingesta o pico real.',
